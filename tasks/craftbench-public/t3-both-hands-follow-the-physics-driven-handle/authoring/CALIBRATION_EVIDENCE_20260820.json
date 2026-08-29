@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "verdict": "THRESHOLDS-FROZEN-PROMOTION-REVIEW",
+  "final_map": {
+    "path": "Content/Maps/t3-both-hands-follow-the-physics-driven-handle/L_TwoHandPhysics.umap",
+    "sha256": "4B825F6735032628D583659C4738D2006DDA4B26F2B8AA7FE98A7979C7B0F200",
+    "fixture_labels_exact": true
+  },
+  "reference": {
+    "processes": 5,
+    "samples_per_fixture": 5,
+    "quartz": {
+      "displacement": [[167.964258, 167.964258], [227.548966, 227.548966]],
+      "direction": [[121.413697, 121.413697], [211.345849, 211.345849]],
+      "hand_error_max": [0.000015, 0.000008],
+      "control_error_max": [0.000015, 0.000008],
+      "body_translation_range": [0.535336, 0.535336],
+      "body_angular_range": [1.308014, 1.308014],
+      "constraint_force_range": [25887.305183, 25887.305183]
+    },
+    "violet": {
+      "displacement": [[167.595784, 167.595784], [255.763465, 255.763465]],
+      "direction": [[167.216111, 167.216111], [255.577921, 255.577921]],
+      "hand_error_max": [0.000010, 0.000012],
+      "control_error_max": [0.000010, 0.000012],
+      "body_translation_range": [0.724155, 0.738500],
+      "body_angular_range": [0.929359, 0.947175],
+      "constraint_force_range": [11686.655140, 11686.655140]
+    },
+    "production_l2_log_sha256": "AC8C0B1CD256C2ADAF3451055DC139F313C3CFAEC8D2E7D04F10F4DEEBEE5DA6",
+    "production_report_sha256": "239D52E7B944ECEA8C81F0324CB83B2726AD0E8126E6B56D2E44998E7E3A3182"
+  },
+  "empty_baseline": {
+    "processes": 5,
+    "samples_per_fixture": 5,
+    "exact_named_failures": 10,
+    "harness_failures": 0,
+    "l2_failure": "BothHandsTrackSamePhysicalHandle: compiled runtime ControlRig count=0",
+    "production_l2i": "0/3",
+    "production_l2_log_sha256": "89085804B96525E762D0FC4DA59C498F953B3FD6BF7844F719C3016A85F80D09",
+    "production_report_sha256": "AE98C9D734A90E03EA625EA93132486CF494B097E5897B726018F8F86A28CA00"
+  },
+  "frozen_thresholds": {
+    "handle_displacement_min_cm": 4.0,
+    "second_direction_projection_min_cm": 4.0,
+    "hand_error_max_cm": 18.0,
+    "control_error_max_cm": 2.0,
+    "body_translation_max_cm": 8.0,
+    "body_angular_max_degrees": 15.0
+  },
+  "frozen_canonical_reference": {
+    "rhi": "null",
+    "l2": "2/2",
+    "l2i": "3/3",
+    "report_sha256": "C9A4A92E05D20D1C36337CAC3B90CDEE3ED51501CF59F3BFB64403B2DFC10C42",
+    "l2_log_sha256": "435BBA56E1BBC8ED603140CD6D6B2B4C6C0EFAC02DC92DBD5EA4050A40B20DBC"
+  },
+  "real_rhi_followup": {
+    "verdict": "INFRASTRUCTURE",
+    "reason": "D3D12 video-memory exhaustion before L2 startup",
+    "report_sha256": "6B333E0BE471EA56BC632FDEC6D6119311BC3FC5AE41A6B84A850F94DD1C3CC5",
+    "l2_log_sha256": "47CBEFE6FD15EFA33428E5C5848F3FB8E57A6571564485C1C3AD26C16304FE5A"
+  },
+  "thresholds_frozen": true,
+  "automatic_go": false,
+  "remaining": [
+    "owner play",
+    "official refgate on committed Git head"
+  ]
+}

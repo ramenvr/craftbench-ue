@@ -1,0 +1,1 @@
+one-shot: periodic schedule removed - the whole-run total (30.0) lands in one application at activation, then the ability ends. Expected FAIL at AB-2 (the step gate).

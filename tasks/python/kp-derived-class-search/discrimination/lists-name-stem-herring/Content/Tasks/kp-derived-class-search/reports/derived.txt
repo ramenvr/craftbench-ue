@@ -1,0 +1,3 @@
+derived name=BP_DrillRig parent=BP_MachineBase
+derived name=BP_HeavyDrillRig parent=BP_DrillRig
+derived name=BP_MachineBaseplate parent=BP_MachineBase

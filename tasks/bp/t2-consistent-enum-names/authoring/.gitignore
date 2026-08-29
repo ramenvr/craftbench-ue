@@ -1,0 +1,14 @@
+# Working artifacts of author_all_assets.py. Never commit either - the
+# committed baseline lives in the substrate tree
+# (UE-projects/ThirdPerson/Content/Tasks/<id>/) and the verified leg
+# deliverables live in ../reference/ and ../discrimination/.
+#
+#   .baseline-stash/  the byte-identical committed baseline: the source every
+#                     author boot starts from and every boot's exit invariant
+#                     is compared against.
+#   .staged/          leg deliverables HARVESTED but not yet verified. A leg
+#                     only reaches the shipped tree once a COLD verify boot
+#                     graded it in real graded-lane conditions.
+.baseline-stash/
+.staged/
+__pycache__/

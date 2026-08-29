@@ -1,0 +1,5 @@
+conforming-fast: 12.0 per tick instead of 5.0 — still inside the disclosed
+3-15 per second band, so it MUST PASS. This is the leg that proves the
+2026-08-11 per-window-band defect is really fixed: under the OLD AB-3 its
+two-tick window read D3=24 against a 15 top and it false-FAILed on a rate
+the prompt permits. Graded standalone, never by cb discriminate.

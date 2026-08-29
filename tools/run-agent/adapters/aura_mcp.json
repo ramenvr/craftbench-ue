@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "unreal_inspector": {
+      "type": "stdio",
+      "command": "<UE_ROOT>/Engine/Binaries/ThirdParty/Python3/<Platform>/bin/python3",
+      "args": [
+        "<REPO_ROOT>/UE-projects/CraftBenchTemplate/Plugins/Aura/MCP/unreal_inspector.py"
+      ],
+      "env": {}
+    },
+    "unreal_editor": {
+      "type": "stdio",
+      "command": "<UE_ROOT>/Engine/Binaries/ThirdParty/Python3/<Platform>/bin/python3",
+      "args": [
+        "<REPO_ROOT>/UE-projects/CraftBenchTemplate/Plugins/Aura/MCP/unreal_editor.py"
+      ],
+      "env": {}
+    }
+  }
+}

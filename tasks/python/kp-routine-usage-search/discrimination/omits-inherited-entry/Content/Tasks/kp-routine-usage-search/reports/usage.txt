@@ -1,0 +1,4 @@
+function name=ComputeChecksum
+entry name=BP_North references=yes
+entry name=BP_South references=no
+entry name=BP_West references=no

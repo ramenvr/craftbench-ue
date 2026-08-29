@@ -1,0 +1,7 @@
+# UI dependencies ONLY. The data layer (model.py, collect.py) is PURE STDLIB and
+# imports NONE of these — keep it that way so the verifier (and tests) can reuse
+# it without installing anything. Install these only to run the TUI / web UI.
+textual>=0.60      # TUI (tui.py)
+fastapi>=0.110     # web API (web/app.py)
+uvicorn>=0.29      # ASGI server (web/__main__.py)
+httpx>=0.27        # required by fastapi.testclient.TestClient (web tests + web smoke)

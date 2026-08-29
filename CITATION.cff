@@ -1,0 +1,54 @@
+cff-version: 1.2.0
+message: >-
+  If you use CraftBench-UE in your work, please cite the paper (below under
+  preferred-citation), not this repository.
+title: CraftBench-UE
+abstract: >-
+  A benchmark and evaluation harness for AI coding agents on Unreal Engine 5.8
+  gameplay-programming tasks. Each task is a behaviour spec with no answer key;
+  submissions are graded by a deterministic verifier that builds the project
+  with UnrealBuildTool, runs it in headless Play-In-Editor, and inspects runtime
+  traces and generated assets. No language model participates in the PASS/FAIL
+  decision.
+type: software
+authors:
+  - family-names: Wu
+    given-names: Shutong
+    affiliation: University of Rochester
+  - family-names: Calderone
+    given-names: Kevin
+    affiliation: RamenVR
+  - family-names: Tsen
+    given-names: Andy
+    affiliation: RamenVR
+repository-code: https://github.com/ramenvr/craftbench-ue
+license: MIT
+keywords:
+  - benchmark
+  - coding agents
+  - large language models
+  - Unreal Engine
+  - deterministic evaluation
+  - game development
+preferred-citation:
+  type: article
+  title: >-
+    CraftBench-UE: Deterministic Evaluation for Coding Agents in Unreal Engine
+  authors:
+    - family-names: Wu
+      given-names: Shutong
+      affiliation: University of Rochester
+    - family-names: Calderone
+      given-names: Kevin
+      affiliation: RamenVR
+    - family-names: Tsen
+      given-names: Andy
+      affiliation: RamenVR
+  year: 2026
+  month: 9
+  journal: arXiv
+  url: https://arxiv.org/abs/2609.23142
+  identifiers:
+    - type: other
+      value: arXiv:2609.23142
+      description: arXiv preprint identifier

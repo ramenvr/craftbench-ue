@@ -1,0 +1,20 @@
+#!/bin/sh
+# cb - thin launcher for the cross-platform CraftBench x Aura CLI (aura_rig/cb.py).
+#
+# Lets you type:   ./cb <command> [flags]
+# instead of:      python3 -m aura_rig.cb <command> [flags]
+#
+# -m aura_rig.cb runs the cb package module as a script (-m is a Python flag, not a cb
+# flag). PYTHONPATH points at this folder so `aura_rig` resolves from any directory.
+# Override the interpreter with CB_PYLAUNCH (e.g. CB_PYLAUNCH="python3.12").
+here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+_py="${CB_PYLAUNCH:-python3}"
+# Actionable error if the interpreter is missing (instead of a bare "not found").
+# See ONBOARDING.md ("I can't run cb").
+if ! command -v "${_py%% *}" >/dev/null 2>&1; then
+  echo "cb: cannot find Python interpreter '${_py}'." >&2
+  echo "  Fix: install Python 3.11+ (python3), or set CB_PYLAUNCH to a 3.11+ python." >&2
+  echo "  To only GRADE tasks you don't need cb -- see ONBOARDING.md (Tier 1)." >&2
+  exit 9
+fi
+PYTHONPATH="$here:$PYTHONPATH" exec "${CB_PYLAUNCH:-python3}" -m aura_rig.cb "$@"

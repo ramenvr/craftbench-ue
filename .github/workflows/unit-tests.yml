@@ -1,0 +1,134 @@
+# The tool unit suites run on EVERY pull request and EVERY push —
+# deliberately with NO `paths:` filter. The suites read four trees
+# (UE-projects/**, tasks/**, docs/**, tools/**), so a filter scoped to any one
+# of them lets a change to the others ship with no CI at all — and an edit to
+# CraftBenchFunctionalTest.{h,cpp} (the base class every L2 fixture derives
+# from) is exactly such a change.
+#
+# An allowlist is the wrong shape here: this repo tracks four trees and a suite
+# reads every one of them, so any filter that is CORRECT is just "everything"
+# with extra maintenance and a silent failure mode when a fifth tree appears.
+# The suites are ~45s and need no UE install; the filter was never buying much.
+#
+# A few tests self-skip where a platform can't host them (e.g. the L1
+# dual-target tests shell-script-stub UBT and skip on Windows).
+#
+# WINDOWS ONLY BY DEFAULT. Windows is the primary (and only) validated platform
+# — UE 5.8, the substrate, and the whole harness are exercised there. macOS and
+# Linux are NOT configured yet: every POSIX leg has failed on the run-agent
+# step, which short-circuits every step behind it — so the suites downstream of
+# run-agent have never actually been observed green on POSIX. Running them by
+# default only produced permanently-red CI that nobody could read a real
+# regression out of.
+#
+# To try the POSIX legs (e.g. while doing the portability work), run this
+# workflow manually from the Actions tab with "all-platforms" checked. Once
+# ubuntu/macOS go green there, promote them back into the default matrix below.
+#
+# NO `branches:` ALLOWLIST ON `push:` either — and that one is a fix, not a
+# preference. The allowlist used to name two branches by hand while the branch
+# real work happened on was a third; the push trigger then matched nothing
+# anyone actually pushed, and gates sat red for days with nobody seeing a run,
+# because a workflow that never triggers looks exactly like a workflow that has
+# nothing to say. A branch allowlist is a config that goes stale in silence the
+# moment a repo renames or moves its default branch — which is precisely what
+# this open-source release does. The suites are stdlib-only, ~45s, and need no
+# UE install, so running them on every push is cheaper than the failure mode.
+name: unit-tests
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+    inputs:
+      all-platforms:
+        description: "Also run the unconfigured macOS + Linux legs (expected to fail)"
+        type: boolean
+        default: false
+
+jobs:
+  unit-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ github.event.inputs.all-platforms == 'true'
+               && fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]')
+               || fromJSON('["windows-latest"]') }}
+        python: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Repo-level lint: every task spec, plus the inventory check that compares
+      # the hand-maintained docs against `git ls-files` — docs/MAPS.md rows,
+      # tasks/CATALOG.md membership, and the anchored count claims in MAPS.md /
+      # CATALOG.md / the repo conventions. This is the ONLY check that reads the REAL tree:
+      # test_inventory.py proves the checker against throwaway git repos and
+      # never against this one, so without this step a missing MAPS.md row still
+      # ships silently.
+      #
+      # Stdlib + git only, ~1s, no UE, no tokens — the same argv `cb lint`
+      # builds, invoked directly so CI needs no `pip install -e tools/run-agent`.
+      # Runs BEFORE the pip install so a doc-drift PR goes red in seconds.
+      # NOT --strict: the two advisory warnings on the real tree must not gate.
+      - name: Task-spec + repo-inventory lint
+        run: python tools/verify-single/tasklint.py --all
+
+      # The review dossier is GENERATED from the specs, the discrimination
+      # packages on disk, and tasklint's own findings — so it must never be
+      # hand-edited or left stale. This is the guard the old hand-maintained
+      # CATALOG sections lacked: they drifted to 11 rows while claiming to match
+      # a generated block of 27, and carried a false "re-checked, id for id"
+      # self-certification. Stdlib + tasklint only, no UE, no tokens.
+      - name: Install dashboard UI deps (textual + fastapi + httpx)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tools/dashboard/requirements.txt
+
+      - name: verify-single (runner + layers)
+        run: python -m unittest discover -v tools/verify-single/tests
+
+      - name: run-agent (harness + aura_rig)
+        working-directory: tools/run-agent
+        run: python -m unittest discover -v -s tests
+
+      - name: coverage
+        working-directory: tools/coverage
+        run: python -m unittest discover -v -s tests -t .
+
+      - name: verify-r2 (advisory judge)
+        run: python -m unittest discover -v tools/verify-r2/tests
+
+      - name: verify-stability
+        run: python -m unittest discover -v -s tools/verify-stability/tests -t .
+
+      - name: compare
+        run: python -m unittest discover -v -s tools/compare/tests -t .
+
+      # Discovery, not a hand-listed module set: the previous explicit list had
+      # silently stopped covering tests/test_live.py and tests/test_tui.py.
+      # -t . keeps the repo root on sys.path so `tools.dashboard.*` resolves,
+      # and picks up web/tests/ in the same pass.
+      - name: dashboard (collect + render + live + tui + web)
+        run: python -m unittest discover -v -s tools/dashboard -t .
+
+      # THE single "which task is this run?" implementation, plus the guard
+      # that its readers still DELEGATE to it. compare_products and
+      # dashboard.collect each once had their own answer and they
+      # disagreed on byte-identical inputs; no run failed, the NUMBERS
+      # were wrong. Stdlib only, no UE, no tokens, ~0.2s.
+      - name: runlib (task identity is one implementation)
+        run: python -m unittest discover -v -s tools/runlib/tests -t .
+
+      # Task-variant authoring helpers. This suite shipped without an
+      # __init__.py, so `unittest discover` could not import the directory and
+      # CI never ran it -- 29 tests that passed only if someone executed the
+      # file by hand. Stdlib only, no UE, no tokens.
+      - name: authoring (task-variant helpers)
+        run: python -m unittest discover -v -s tools/authoring/tests -t .
+

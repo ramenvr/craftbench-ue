@@ -1,0 +1,9 @@
+class name=BP_AuditTarget parent=Actor
+component name=DefaultSceneRoot class=SceneComponent
+component name=Body class=StaticMeshComponent
+component name=Beacon class=PointLightComponent
+variable name=Flagged type=bool
+variable name=Score type=float
+compile status=clean
+instance label=Audit_Alpha location=0.0,0.0,100.0
+instance label=Audit_Beta location=500.0,0.0,100.0

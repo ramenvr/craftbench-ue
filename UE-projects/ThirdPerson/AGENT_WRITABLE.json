@@ -1,0 +1,36 @@
+{
+    "_comment": "CraftBench substrate-level manifest for the ThirdPerson substrate (the stock UE 5.8 Third Person C++ template). Agents extend the template's runtime module Source/ThirdPerson/ and/or deliver .uasset content under Content/Tasks/<task_id>/ (asset_writable also accepts the folders editor agents author into). Same semantics as CraftBenchTemplate/AGENT_WRITABLE.json: a submission file must match a 'writable' prefix (or, for assets, an 'asset_writable' prefix) and no 'deny' prefix; deny wins. See tools/verify-single/sandbox.py. OFPA carve-out (2026-07-29, level-deliverable lane): One-File-Per-Actor mirrors of TASK maps (Content/__ExternalActors__/Tasks/ + Content/__ExternalObjects__/Tasks/) are asset_writable so an agent-authored /Game/Tasks/<id>/ level is submittable without disabling OFPA. Mirrors of every OTHER map (ThirdPerson/, Maps/, Variant_*/, ...) are rejected by allowlist-miss - there is deliberately NO broad __ExternalActors__ deny anymore, so NEVER add a broad Content/ (or Content/__ExternalActors__/) asset_writable prefix: that would silently legalize actor-level edits to protected maps. Config lane (2026-07-29, semantic config lane): the files listed in 'config_writable' (exact file rel-paths, not prefixes) are path-accepted only if listed here, then semantically diff-validated against the task spec's config_allow allowlist by the runner (tools/verify-single/config_lane.py) - an ini change outside that allowlist is a sandbox-class reject; everything else under Config/ rejects by allowlist-miss (the broad Config/ deny was removed to open this lane), so NEVER add a broad Config/ writable prefix: that would path-accept arbitrary engine-config edits with no semantic gate.",
+    "substrate": "ThirdPerson",
+    "game_module": "ThirdPerson",
+    "writable": [
+        "Source/ThirdPerson/",
+        "Content/Tasks/"
+    ],
+    "asset_writable": [
+        "Content/Tasks/",
+        "Content/Blueprints/",
+        "Content/Abilities/",
+        "Content/Generated_Materials/",
+        "Content/Generated_Audio/",
+        "Content/__ExternalActors__/Tasks/",
+        "Content/__ExternalObjects__/Tasks/"
+    ],
+    "config_writable": [
+        "Config/DefaultEngine.ini",
+        "Config/DefaultInput.ini"
+    ],
+    "deny": [
+        "Source/CraftBenchTests/",
+        "Content/Maps/",
+        "Content/ThirdPerson/",
+        "Content/Characters/",
+        "Content/Input/",
+        "Content/LevelPrototyping/",
+        "Content/Variant_Combat/",
+        "Content/Variant_Platforming/",
+        "Content/Variant_SideScrolling/",
+        "Plugins/",
+        "ThirdPerson.uproject",
+        "AGENT_WRITABLE.json"
+    ]
+}

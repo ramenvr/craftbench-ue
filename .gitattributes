@@ -1,0 +1,32 @@
+# CraftBench .gitattributes — line-ending and binary-asset guard
+#
+# Why this file exists: a Windows checkout with git's default
+# core.autocrlf=true rewrites LF -> CRLF in tracked text at checkout time. For
+# most files that is harmless. For the three kinds below it is not, so their
+# bytes are pinned on every platform.
+#
+# Scope is deliberately narrow. There is NO blanket `* text=auto`: a text
+# guess applied to the committed binary UE maps and assets would re-normalize
+# and corrupt them, and the committed binary is the only map source — a
+# mangled .umap is an explicit L2 FAIL.
+
+# --- The project descriptor: read and rewritten by the runner ---
+# The runner edits the cloned workdir's .uproject (plugin disable) and writes
+# it back with explicit \n. Pinning it LF keeps that byte-stable across OSes
+# and keeps cross-platform diffs clean.
+*.uproject text eol=lf
+
+# --- POSIX shell entry points: CRLF breaks bash on the \r ---
+# The repo-root `cb` shim and setup.sh execute under sh/bash on macOS, Linux
+# and git-bash; an autocrlf checkout injects \r into every line including the
+# shebang, and the script dies with an unreadable error.
+/cb      text eol=lf
+setup.sh text eol=lf
+*.sh     text eol=lf
+
+# --- UE binary content: never normalize, never diff as text ---
+# 109 .umap + 658 .uasset are committed binaries. `binary` disables eol
+# conversion AND text diffing, so neither autocrlf nor a text=auto guess can
+# ever rewrite their bytes.
+*.umap   binary
+*.uasset binary

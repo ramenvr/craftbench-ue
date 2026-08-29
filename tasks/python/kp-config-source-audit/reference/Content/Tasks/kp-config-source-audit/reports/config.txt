@@ -1,0 +1,2 @@
+source asset=/Game/Tasks/kp-config-source-audit/corpus/Flash_Archive_2024
+value brightness=725

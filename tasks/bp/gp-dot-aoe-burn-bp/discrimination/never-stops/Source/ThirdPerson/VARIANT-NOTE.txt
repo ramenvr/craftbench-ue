@@ -1,0 +1,1 @@
+never-stops: EndAbility-on-duration removed. Expected FAIL at AB-5.

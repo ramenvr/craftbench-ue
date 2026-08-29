@@ -1,0 +1,1571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CraftBench</title>
+  <!--
+    Single self-contained read-only client. No build step:
+      - Tailwind via Play CDN (dev/in-house tool — fine to load from CDN).
+      - Google Fonts (Inter UI face + JetBrains Mono data face) via CDN <link>.
+      - vanilla JS, no framework, no bundler.
+    Data: GET /api/snapshot (Snapshot.to_dict). Live: consume /events (SSE) and
+    fall back to polling /api/snapshot every ~3s if SSE is unavailable. Cells map
+    to (task x product); clicking one with runs fetches /api/run/{run_id}.
+
+    Two contract facts honored in the UI copy below:
+      1. per-layer detail is text-parsed best-effort; `overall` is authoritative.
+      2. advisory_score is null everywhere today — we never imply R2 ran.
+
+    AESTHETIC: light editorial minimal. Paper canvas, one ink-blue accent, a
+    three-tab split (Overview / Results / Launch), Inter + JetBrains Mono, and a
+    low-chroma tint+ink matrix. This is a reskin + reorganization — every fetch
+    URL, JSON field name, and element id the JS depends on is preserved.
+  -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', "system-ui", "sans-serif"],
+            mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* ---- palette: light editorial paper + a single ink-blue accent --------- */
+    :root {
+      --bg:        #fbfbfa;  /* paper / canvas */
+      --bg-2:      #ffffff;  /* card surface */
+      --bg-3:      #f4f4f2;  /* inset / hover / chip rail */
+      --line:      #e7e5e1;  /* hairline rule */
+      --line-2:    #d6d3cd;  /* stronger rule / header divider */
+      --ink:       #1c1b19;  /* primary text */
+      --ink-dim:   #6b6862;  /* secondary text */
+      --ink-faint: #9b978f;  /* captions / tertiary */
+      --accent:    #3b5bdb;  /* single ink-blue */
+      --accent-dim:#2f49ad;
+      --accent-soft:#eaeefb; /* accent tint: active tab / fills */
+      /* semantics — DATA ONLY */
+      --pass:      #2f9e44;
+      --fail:      #e03131;
+      --dim:       #adb5bd;  /* not-run / planned grey */
+      --advisory:  #e8920c;  /* amber */
+      --verifier:  #1c7ed6;  /* sky-blue */
+    }
+
+    /* opt-in dark (token-parity, NOT default) — keeps the darkMode:"class" hook
+       degrading gracefully if anything re-adds class="dark" to <html>. */
+    html.dark {
+      --bg:#101113; --bg-2:#161719; --bg-3:#1d1f22; --line:#26282c; --line-2:#34373c;
+      --ink:#e9eaec; --ink-dim:#9aa0a8; --ink-faint:#6b7178;
+      --accent:#5b7cfa; --accent-dim:#3b5bdb; --accent-soft:#1e2030;
+      --pass:#3ec98a; --fail:#e85d68; --dim:#5b6373; --advisory:#d6a242; --verifier:#5b9bd8;
+    }
+
+    html, body { background: var(--bg); }
+    body {
+      color: var(--ink);
+      font-family: "Inter", system-ui, sans-serif;
+      font-feature-settings: "tnum" 1;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      position: relative;
+      line-height: 1.5;
+    }
+
+    /* data / ids / numbers / slugs — one consistent mono everywhere */
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-feature-settings: "tnum" 1, "zero" 1;
+      letter-spacing: -0.01em;
+    }
+
+    .layer { position: relative; z-index: 1; }
+
+    /* ---- flat panels ------------------------------------------------------- */
+    .panel {
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .panel-hd {
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      font-family: "Inter", sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+    }
+
+    /* ---- tab bar ----------------------------------------------------------- */
+    .tab-btn {
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+      font-weight: 500;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--ink-dim);
+      transition: color .12s ease;
+    }
+    .tab-btn:hover { color: var(--ink); }
+    .tab-btn.active { color: var(--accent); }
+
+    /* ---- focus / hover ----------------------------------------------------- */
+    .cell-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .cell-btn { transition: filter .12s ease; }
+    .cell-btn:hover:not(:disabled) { filter: brightness(0.97); }
+    .row-hover { transition: background .12s ease; }
+    .card-hover { transition: background .12s ease, border-color .12s ease; }
+
+    pre.detail { white-space: pre-wrap; word-break: break-word; }
+
+    /* scrollbar — thin */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; }
+
+    /* segmented progress bars used by the task-progress funnel */
+    .seg { transition: width .5s cubic-bezier(.22,.61,.36,1); }
+    @media (prefers-reduced-motion: reduce) {
+      .seg { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layer max-w-[1480px] mx-auto px-5 py-7">
+
+    <!-- =====================================================================
+         HEADER — global, stays visible on every tab
+    ====================================================================== -->
+    <header class="flex flex-wrap items-end justify-between gap-5 pb-5 mb-6 border-b"
+            style="border-color: var(--line-2);">
+      <div class="min-w-0">
+        <h1 class="font-sans mt-0.5" style="font-size: 1.5rem; font-weight: 600; color: var(--ink);">
+          CraftBench
+        </h1>
+        <p class="text-sm mt-1" style="color: var(--ink-dim); max-width: 60ch;">
+          <span class="sr-only">CraftBench dashboard — </span>read-only telemetry over <span class="mono" style="color: var(--ink);">runs/</span> — the same scrubbed
+          tasks across products, scored by a deterministic <span style="color: var(--verifier);">pass/fail</span> gate.
+        </p>
+      </div>
+      <div class="flex items-center gap-4 text-xs" style="color: var(--ink-dim);">
+        <label class="flex items-center gap-1.5 select-none cursor-pointer" title="Dedupe duplicate (product, task) attempts to the newest before the matrix math.">
+          <input id="latestOnly" type="checkbox" class="accent-[#3b5bdb]" />
+          <span class="eyebrow text-[10px]" style="letter-spacing:0.1em;">latest attempt only</span>
+        </label>
+        <span id="liveDot" class="inline-flex items-center gap-2 mono px-2.5 py-1 rounded-md"
+              style="background: var(--bg-2); border: 1px solid var(--line);">
+          <span id="livePip" class="w-2 h-2 rounded-full" style="background: var(--ink-faint);"></span>
+          <span id="liveLabel" class="text-[11px]">connecting…</span>
+        </span>
+        <span id="generatedAt" class="mono text-[11px]" style="color: var(--ink-faint);"></span>
+      </div>
+    </header>
+
+    <!-- =====================================================================
+         TAB BAR — global, switches the three panels below (client-side only)
+    ====================================================================== -->
+    <nav id="tabBar" class="flex items-center gap-6 border-b mb-7" style="border-color: var(--line);" role="tablist" aria-label="Dashboard sections">
+      <button class="tab-btn" id="tab-overview" role="tab" data-tab="overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
+      <button class="tab-btn" id="tab-results" role="tab" data-tab="results" aria-controls="panel-results" aria-selected="false" tabindex="-1">Results</button>
+      <button class="tab-btn" id="tab-launch" role="tab" data-tab="launch" aria-controls="panel-launch" aria-selected="false" tabindex="-1">Launch</button>
+    </nav>
+
+    <!-- =====================================================================
+         TAB 1 — OVERVIEW (default): totals + task progress + pipeline
+    ====================================================================== -->
+    <section id="panel-overview" data-tab-panel="overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="0">
+
+    <!-- TOTALS — inline figures (filled by renderTotals) -->
+    <section id="totals" class="flex flex-wrap items-stretch gap-x-8 gap-y-4 mb-8"></section>
+
+    <!-- =====================================================================
+         TASK IMPLEMENTATION PROGRESS — the build funnel + catalog (TASK B)
+    ====================================================================== -->
+    <section class="mb-8 panel">
+      <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 panel-hd">
+        <h2 class="eyebrow text-[13px] flex items-center gap-2.5" style="color: var(--ink-dim);">
+          <span>Task implementation progress</span>
+          <span class="text-[10px] font-normal normal-case tracking-normal font-sans" style="color: var(--ink-faint);">what's built · validated vs wired vs planned · toward v1.0</span>
+        </h2>
+        <div class="flex items-center gap-3 text-[10px] eyebrow" style="color: var(--ink-faint); letter-spacing:0.12em;">
+          <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background: var(--pass);"></span>validated</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background: var(--advisory);"></span>wired</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm" style="background: var(--dim);"></span>planned</span>
+        </div>
+      </div>
+
+      <div class="px-4 py-4">
+        <!-- funnel readout (filled by renderTaskProgress) -->
+        <div id="tpFunnel" class="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-5"></div>
+
+        <!-- legend of status meanings -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4 text-[11px]">
+          <div class="rounded-md px-3 py-2" style="border:1px solid var(--line); background: var(--bg);">
+            <div class="eyebrow text-[10px] mb-0.5" style="color: var(--pass);">validated</div>
+            <div style="color: var(--ink-dim);">a correct solution <b style="color: var(--ink);">PASSED</b> the verifier — fully built &amp; proven.</div>
+          </div>
+          <div class="rounded-md px-3 py-2" style="border:1px solid var(--line); background: var(--bg);">
+            <div class="eyebrow text-[10px] mb-0.5" style="color: var(--advisory);">wired</div>
+            <div style="color: var(--ink-dim);">reference solution or runs exist, <b style="color: var(--ink);">no pass yet</b> — built, awaiting validation.</div>
+          </div>
+          <div class="rounded-md px-3 py-2" style="border:1px solid var(--line); background: var(--bg);">
+            <div class="eyebrow text-[10px] mb-0.5" style="color: var(--dim);">planned</div>
+            <div style="color: var(--ink-dim);">authored <span class="mono">.md</span> only, verifier <b style="color: var(--ink);">not yet built</b>.</div>
+          </div>
+        </div>
+
+        <!-- filter + sort controls -->
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <span class="eyebrow text-[10px] mr-1" style="color: var(--ink-faint);">filter</span>
+          <div id="tpFilters" class="flex flex-wrap gap-1.5"></div>
+          <div class="ml-auto flex items-center gap-2">
+            <span class="eyebrow text-[10px]" style="color: var(--ink-faint);">order</span>
+            <select id="tpSort" class="mono text-[11px] rounded-md px-2 py-1"
+                    style="background: var(--bg); border:1px solid var(--line); color: var(--ink);">
+              <option value="status-built">status · built first</option>
+              <option value="status-gap">status · gap first</option>
+              <option value="task">task id (a→z)</option>
+              <option value="runs">most runs</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- task catalog grid -->
+        <div id="tpGrid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5"></div>
+        <div id="tpEmpty" class="hidden text-sm italic py-6 text-center" style="color: var(--ink-faint);"></div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         PIPELINE graph — quick map; collapsed by default, at the bottom
+    ====================================================================== -->
+    <section class="mb-2 panel">
+      <div class="flex items-center justify-between gap-3 px-4 py-2.5 panel-hd">
+        <h2 class="eyebrow text-[13px] flex items-center gap-2.5" style="color: var(--ink-dim);">
+          <span>CraftBench pipeline</span>
+          <span class="text-[10px] font-normal normal-case tracking-normal font-sans" style="color: var(--ink-faint);">quick map · the dashboard is the frontend node</span>
+        </h2>
+        <button id="pipelineToggle" class="eyebrow text-[10px] transition" style="color: var(--ink-faint);">show ▾</button>
+      </div>
+      <div id="pipelineBody" class="hidden px-4 py-5">
+        <!-- top→bottom flow, HTML/CSS boxes + ↓ arrow glyphs -->
+        <div class="flex flex-col items-center gap-1 text-[11px] mx-auto max-w-[16rem]">
+
+          <!-- source -->
+          <div class="w-full text-center rounded-md px-3 py-1.5" style="border:1px solid var(--line-2); background: var(--bg-3);">
+            <div class="font-sans font-semibold" style="color: var(--ink);">UE PROJECT</div>
+            <div class="text-[9px] leading-tight" style="color: var(--ink-faint);">+ project dependency</div>
+          </div>
+          <div class="select-none leading-none" style="color: var(--line-2);">↓</div>
+
+          <!-- tasks -->
+          <div class="w-full text-center rounded-md px-3 py-1.5" style="border:1px solid var(--line-2); background: var(--bg-3);">
+            <div class="font-sans font-semibold" style="color: var(--ink);">TASKS</div>
+            <div class="text-[9px] leading-tight mono" style="color: var(--ink-faint);">GAS · BP · …</div>
+          </div>
+          <div class="flex items-center gap-1.5 select-none leading-none" style="color: var(--line-2);">
+            <span>↓</span>
+            <span class="text-[8px] eyebrow" style="color: var(--ink-faint);">task category</span>
+          </div>
+
+          <!-- generate (with backend selection) -->
+          <div class="w-full text-center rounded-md px-3 py-1.5" style="border:1px solid var(--advisory); background: var(--bg-3);">
+            <div class="font-sans font-semibold" style="color: var(--advisory);">GENERATE</div>
+            <div class="text-[9px] leading-tight mb-1" style="color: var(--ink-dim);">backend selection</div>
+            <div class="flex flex-wrap justify-center gap-1">
+              <span class="px-1.5 rounded mono text-[8px]" style="background: var(--bg-2); color: var(--ink-dim);">Baseline</span>
+              <span class="px-1.5 rounded mono text-[8px]" style="background: var(--bg-2); color: var(--ink-dim);">unreal-mcp</span>
+              <span class="px-1.5 rounded mono text-[8px]" style="background: var(--bg-2); color: var(--ink-dim);">openrouter</span>
+              <span class="px-1.5 rounded mono text-[8px]" style="background: var(--bg-2); color: var(--ink-dim);">bare</span>
+            </div>
+          </div>
+          <div class="select-none leading-none" style="color: var(--line-2);">↓</div>
+
+          <!-- verifier -->
+          <div class="w-full text-center rounded-md px-3 py-1.5" style="border:1px solid var(--verifier); background: var(--bg-3);">
+            <div class="font-sans font-semibold" style="color: var(--verifier);">VERIFIER</div>
+            <div class="text-[9px] leading-tight mono" style="color: var(--ink-dim);">L1·L2·L2I (gate)</div>
+          </div>
+          <div class="select-none leading-none" style="color: var(--line-2);">↓</div>
+
+          <!-- result -->
+          <div class="w-full text-center rounded-md px-3 py-1.5" style="border:1px solid var(--pass); background: var(--bg-3);">
+            <div class="font-sans font-semibold" style="color: var(--pass);">RESULT</div>
+            <div class="text-[9px] leading-tight mono" style="color: var(--ink-dim);">pass / fail</div>
+          </div>
+          <div class="select-none leading-none" style="color: var(--line-2);">↓</div>
+
+          <!-- result fan-out: row of three -->
+          <div class="flex flex-wrap justify-center gap-1">
+            <span class="rounded px-1.5 py-0.5 text-[9px]" style="border:1px solid var(--line-2); background: var(--bg-3); color: var(--ink-dim);">Analysis</span>
+            <span class="rounded px-1.5 py-0.5 text-[9px]" style="border:1px solid var(--line-2); background: var(--bg-3); color: var(--ink-dim);">Verdict</span>
+            <span class="rounded px-1.5 py-0.5 text-[9px]" style="border:1px solid var(--line-2); background: var(--bg-3); color: var(--ink-dim);">Agent Loop ↺</span>
+          </div>
+          <div class="select-none leading-none" style="color: var(--line-2);">↓</div>
+
+          <!-- frontend (this dashboard) -->
+          <div class="w-full text-center rounded-md px-3 py-1.5" style="border:1px solid var(--accent); background: var(--accent-soft);">
+            <div class="font-sans font-semibold" style="color: var(--ink);">FRONTEND</div>
+            <div class="text-[9px] leading-tight" style="color: var(--accent);">this dashboard ← results</div>
+          </div>
+        </div>
+        <p class="text-[10px] mt-4 text-center" style="color: var(--ink-faint);">
+          The <span style="color: var(--advisory);">Generate → Verifier → Result</span> closure is driven from the
+          <span style="color: var(--advisory);">Launch</span> tab — its <span style="color: var(--ink-dim);">route</span> picker is this graph's "backend selection" node.
+        </p>
+      </div>
+    </section>
+
+    </section><!-- /#panel-overview -->
+
+    <!-- =====================================================================
+         TAB 2 — RESULTS: matrix + head-to-head + failures + coverage gaps
+    ====================================================================== -->
+    <section id="panel-results" data-tab-panel="results" role="tabpanel" aria-labelledby="tab-results" tabindex="0" hidden>
+
+    <!-- MATRIX — pass-rate heatmap (task × product) -->
+    <section class="mb-10">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-2.5">
+        <h2 class="flex items-baseline gap-2" style="color: var(--ink); font-size: 15px; font-weight: 500;">
+          Pass-rate matrix
+          <span class="text-xs font-normal mono" style="color: var(--ink-faint);">(task × product · cell = n_pass/n)</span>
+        </h2>
+        <div class="flex items-center gap-3 text-[11px]" style="color: var(--ink-faint);">
+          <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background:#ebfbee;border:1px solid #b2f2bb"></span>pass</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background:#fff4e6;border:1px solid #ffd8a8"></span>partial</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background:#ffe3e3;border:1px solid #ffc9c9"></span>fail</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: var(--bg-3); border:1px solid var(--line-2);"></span>not run</span>
+          <span class="inline-flex items-center gap-1.5" title="Capability is ungrounded: no task in it was run by ≥2 products."><span style="color: var(--advisory);">⚠</span> ungrounded</span>
+        </div>
+      </div>
+      <div class="overflow-x-auto panel">
+        <table id="matrix" class="w-full text-sm border-collapse"></table>
+      </div>
+      <p class="text-[11px] mt-2" style="color: var(--ink-faint);">
+        Click a cell with runs to open the latest attempt's <span style="color: var(--ink-dim);">full single-run report</span>
+        (banner + task spec + submission + per-layer logs). Per-layer detail is text-parsed best-effort; the coarse
+        <span class="mono">overall</span> is authoritative.
+      </p>
+    </section>
+
+    <!-- Head-to-head -->
+    <section class="mb-10">
+      <h2 class="mb-2.5 flex items-baseline gap-2" style="color: var(--ink); font-size: 15px; font-weight: 500;">
+        Head-to-head
+        <span class="text-xs font-normal font-sans" style="color: var(--ink-faint);">(same task, ≥2 products — the only true comparisons)</span>
+      </h2>
+      <div id="headToHead" class="overflow-x-auto panel"></div>
+    </section>
+
+    <!-- Two-column lower region: failures + coverage gaps -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+      <!-- Failures -->
+      <section>
+        <h2 class="mb-2.5 flex items-baseline gap-2" style="color: var(--ink); font-size: 15px; font-weight: 500;">
+          Failures
+          <span id="failCount" class="text-xs font-normal mono" style="color: var(--ink-faint);"></span>
+        </h2>
+        <div id="failures" class="space-y-2"></div>
+      </section>
+
+      <!-- Coverage gaps -->
+      <section>
+        <h2 class="mb-2.5 flex items-baseline gap-2" style="color: var(--ink); font-size: 15px; font-weight: 500;">
+          Coverage gaps
+          <span class="text-xs font-normal font-sans" style="color: var(--ink-faint);">(declared task × product not yet attempted)</span>
+        </h2>
+        <div id="coverage" class="space-y-2"></div>
+      </section>
+    </div>
+
+    </section><!-- /#panel-results -->
+
+    <!-- =====================================================================
+         TAB 3 — LAUNCH: the ONE write action + jobs feed
+    ====================================================================== -->
+    <section id="panel-launch" data-tab-panel="launch" role="tabpanel" aria-labelledby="tab-launch" tabindex="0" hidden>
+
+    <section class="mb-8 panel">
+      <div class="flex items-center justify-between gap-3 px-4 py-2.5 panel-hd">
+        <h2 class="eyebrow text-[13px] flex items-center gap-2.5" style="color: var(--ink-dim);">
+          <span>Launch a run</span>
+          <span class="text-[10px] font-normal normal-case tracking-normal font-sans" style="color: var(--ink-faint);">spawns a real <span class="mono">tools/run-agent/run.py</span> job — not read-only</span>
+        </h2>
+        <button id="launchToggle" class="eyebrow text-[10px] transition" style="color: var(--ink-faint);">hide ▴</button>
+      </div>
+      <div id="launchPanel" class="px-4 py-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-start">
+          <label class="block">
+            <span class="block eyebrow text-[10px] mb-1.5" style="color: var(--ink-dim);">task</span>
+            <select id="launchTask" class="w-full rounded-md px-2 py-1.5 text-sm mono" style="background: var(--bg); border:1px solid var(--line-2); color: var(--ink);"></select>
+          </label>
+          <label class="block">
+            <span class="block eyebrow text-[10px] mb-1.5" style="color: var(--ink-dim);">route <span class="font-normal normal-case tracking-normal font-sans" style="color: var(--ink-faint);">(backend selection)</span></span>
+            <select id="launchRoute" class="w-full rounded-md px-2 py-1.5 text-sm" style="background: var(--bg); border:1px solid var(--line-2); color: var(--ink);"></select>
+          </label>
+          <label class="block">
+            <span class="block eyebrow text-[10px] mb-1.5" style="color: var(--ink-dim);">model</span>
+            <select id="launchModel" class="w-full rounded-md px-2 py-1.5 text-sm mono" style="background: var(--bg); border:1px solid var(--line-2); color: var(--ink);"></select>
+          </label>
+          <label class="block">
+            <span class="block eyebrow text-[10px] mb-1.5" style="color: var(--ink-dim);">
+              UE root
+              <span id="ueAutoBadge" class="hidden ml-1 normal-case tracking-normal px-1.5 rounded text-[9px] mono" style="background: rgba(47,158,68,0.12); color: var(--pass); border:1px solid rgba(47,158,68,0.4);">auto-detected</span>
+            </span>
+            <input id="launchUeRoot" placeholder="(empty → server auto-locates)" autocomplete="off"
+                   class="w-full rounded-md px-2 py-1.5 text-sm mono" style="background: var(--bg); border:1px solid var(--line-2); color: var(--ink);" />
+          </label>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 mt-3">
+          <label class="flex items-center gap-1.5 text-xs select-none cursor-pointer" style="color: var(--ink-dim);"
+                 title="unreal-mcp needs a live editor + --live-project + --ue-root.">
+            <input id="launchLive" type="checkbox" class="accent-amber-500" />
+            live-project
+          </label>
+          <span id="launchHint" class="text-[11px] mono" style="color: var(--ink-faint);"></span>
+          <button id="launchBtn"
+                  class="ml-auto rounded-md text-sm font-sans font-semibold px-5 py-1.5 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  style="background: var(--advisory); color: #1a1205;">
+            Launch
+          </button>
+        </div>
+        <p class="text-[11px] mt-2" style="color: var(--ink-faint);">
+          A real launch starts a background job; new runs appear in the matrix on the next refresh.
+          <span style="color: var(--advisory);">unreal-mcp</span> needs a live UnrealEditor — its MCP server lives inside the editor — so without one the job fails honestly with its log. The other three routes write files and open no editor.
+        </p>
+        <!-- recent jobs (polled from /api/jobs every ~2s) -->
+        <div id="jobsWrap" class="mt-3 hidden">
+          <div class="flex items-center justify-between gap-2 mb-1.5">
+            <div class="eyebrow text-[10px]" style="color: var(--ink-faint);">recent jobs</div>
+            <div class="text-[10px]" style="color: var(--ink-faint);">finished runs appear in the matrix on the Results tab on its next refresh</div>
+          </div>
+          <div id="jobsList" class="space-y-1.5"></div>
+        </div>
+      </div>
+    </section>
+
+    </section><!-- /#panel-launch -->
+
+    <footer class="mt-12 pt-4 text-[11px]" style="border-top: 1px solid var(--line); color: var(--ink-faint);">
+      <span class="mono" id="schemaTag"></span> · advisory (R2) scores are null in all current runs — this view never implies R2 ran.
+    </footer>
+  </div>
+
+  <!-- Full single-run report modal (iframe over /api/run/{id}/report) -->
+  <div id="reportModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4" style="background: rgba(28,27,25,0.32);">
+    <div class="panel w-full max-w-5xl h-[88vh] flex flex-col shadow-2xl" style="background: var(--bg-2); border-color: var(--line-2);">
+      <div class="flex items-center justify-between gap-4 px-4 py-2.5 panel-hd">
+        <div class="min-w-0">
+          <div id="rTitle" class="text-sm font-sans font-semibold truncate" style="color: var(--ink);">single-run report</div>
+          <div id="rSub" class="text-[11px] mono truncate" style="color: var(--ink-dim);"></div>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <a id="rOpenTab" href="#" target="_blank" rel="noopener"
+             class="text-xs transition" style="color: var(--accent);">open in new tab ↗</a>
+          <button id="rClose" class="text-2xl leading-none px-1 transition" style="color: var(--ink-dim);" aria-label="Close">&times;</button>
+        </div>
+      </div>
+      <iframe id="rFrame" title="single-run report" class="flex-1 w-full rounded-b-[10px] bg-white"
+              sandbox="allow-same-origin"></iframe>
+    </div>
+  </div>
+
+  <!-- Run detail modal -->
+  <div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4" style="background: rgba(28,27,25,0.32);">
+    <div class="panel max-w-2xl w-full max-h-[85vh] overflow-y-auto shadow-2xl" style="background: var(--bg-2); border-color: var(--line-2);">
+      <div class="flex items-start justify-between gap-4 p-4 panel-hd sticky top-0" style="background: var(--bg-2);">
+        <div>
+          <div id="mTitle" class="text-base font-sans font-semibold" style="color: var(--ink);"></div>
+          <div id="mSub" class="text-xs mono mt-0.5" style="color: var(--ink-dim);"></div>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <button id="mFullReport" class="text-xs transition hidden" style="color: var(--accent);">open full report ↗</button>
+          <button id="mClose" class="text-2xl leading-none px-1 transition" style="color: var(--ink-dim);" aria-label="Close">&times;</button>
+        </div>
+      </div>
+      <div id="mBody" class="p-4 space-y-4 text-sm"></div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+
+// ---- small helpers ---------------------------------------------------------
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html !== undefined) n.innerHTML = html;
+  return n;
+};
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const pct = (r) => `${Math.round(r * 100)}%`;
+const fmtCost = (c) => (c == null ? "—" : `$${c.toFixed(4)}`);
+const fmtDur = (d) => (d == null ? "—" : `${d.toFixed(1)}s`);
+
+// Heatmap color for a pass_rate in [0,1] across n runs (null = not run).
+// Light tint + dark ink.
+function cellStyle(rate, n) {
+  if (n === 0) return { bg: "var(--bg-3)", border: "1px solid var(--line)", fg: "var(--ink-faint)" };
+  if (rate >= 0.999) return { bg: "#ebfbee", fg: "#2b8a3e" };   // pass: tint + ink
+  if (rate <= 0.001) return { bg: "#ffe3e3", fg: "#c92a2a" };   // fail
+  return { bg: "#fff4e6", fg: "#b35309" };                       // partial
+}
+
+const statusBadge = (status) => {
+  const map = {
+    pass:  "background:#ebfbee;color:#2b8a3e;border-color:#b2f2bb",
+    fail:  "background:#ffe3e3;color:#c92a2a;border-color:#ffc9c9",
+    skip:  "background:var(--bg-3);color:var(--ink-dim);border-color:var(--line-2)",
+    error: "background:#f3e8ff;color:#9333ea;border-color:#e9d5ff",
+    "n/a": "background:var(--bg-3);color:var(--ink-dim);border-color:var(--line-2)",
+  };
+  const style = map[status] || "background:var(--bg-3);color:var(--ink-dim);border-color:var(--line-2)";
+  return `<span class="inline-block px-1.5 py-0.5 rounded border text-[10px] font-semibold uppercase mono" style="${style}">${esc(status)}</span>`;
+};
+
+// Short product label for crowded headers (keep full slug in title=).
+const shortProduct = (slug) => {
+  const [layer, model] = slug.split(":");
+  return model ? `${layer}<span style="color:var(--ink-faint)">:</span>${model}` : layer;
+};
+
+// ---- state -----------------------------------------------------------------
+let SNAP = null;          // last payload
+let latestOnly = false;
+
+// Index runs by (task_id, product) -> array, newest last (runs already sorted
+// by started_at then run_id in the payload), so [-1] is the latest attempt.
+function indexRuns(snap) {
+  const idx = new Map();
+  for (const r of snap.runs) {
+    const k = r.task_id + " " + r.product;
+    if (!idx.has(k)) idx.set(k, []);
+    idx.get(k).push(r);
+  }
+  return idx;
+}
+
+// ---- render: totals --------------------------------------------------------
+// Plain inline figures (mono numeral + small uppercase label), hairline-separated.
+function renderTotals(t) {
+  const figs = [
+    ["tasks", t.n_tasks, "var(--ink)"],
+    ["runs", t.n_runs, "var(--ink)"],
+    ["products", t.n_products, "var(--ink)"],
+    ["pass", t.n_pass, "var(--pass)"],
+    ["fail", t.n_fail + t.n_fail_no_edits, "var(--fail)"],
+    ["total cost", fmtCost(t.total_cost_usd), "var(--verifier)"],
+  ];
+  const root = $("#totals");
+  root.replaceChildren();
+  figs.forEach(([label, val, color], i) => {
+    const fig = el("div", i > 0 ? "pl-8" : "");
+    if (i > 0) fig.style.borderLeft = "1px solid var(--line)";
+    const num = el("div", "text-2xl font-semibold mono leading-none", esc(val));
+    num.style.color = color;
+    fig.appendChild(num);
+    const lbl = el("div", "eyebrow text-[10px] mt-1", esc(label));
+    lbl.style.color = "var(--ink-faint)";
+    fig.appendChild(lbl);
+    root.appendChild(fig);
+  });
+}
+
+// ---- render: task implementation progress (TASK B) -------------------------
+// State for the catalog filter/sort. Defaults: show all, built-first order.
+let tpFilter = "all";   // all | validated | wired | planned
+let tpSort = "status-built";
+
+// Status -> instrument readout colors (CSS var names).
+const TP_STATUS = {
+  validated: { col: "var(--pass)",     label: "validated" },
+  wired:     { col: "var(--advisory)", label: "wired" },
+  planned:   { col: "var(--dim)",      label: "planned" },
+};
+
+function renderTaskProgress(snap) {
+  const tp = snap.task_progress || { items: [], summary: {} };
+  const items = tp.items || [];
+  const s = tp.summary || { authored: 0, validated: 0, wired: 0, planned: 0, v1_target: 0 };
+
+  renderTpFunnel(s);
+  renderTpFilters(s);
+  renderTpGrid(items);
+}
+
+function renderTpFunnel(s) {
+  const root = $("#tpFunnel");
+  root.replaceChildren();
+  const authored = s.authored || 0;
+  const target = s.v1_target || 0;
+  const gap = Math.max(0, target - authored);
+  const authoredPct = target ? Math.min(100, (authored / target) * 100) : 0;
+
+  // -- big funnel card: authored vs v1_target, with the not-yet-authored gap --
+  const funnel = el("div", "panel lg:col-span-3 px-4 py-3.5");
+  funnel.style.borderColor = "var(--line)";
+  funnel.innerHTML = `
+    <div class="flex items-end justify-between gap-3 mb-2">
+      <div>
+        <div class="eyebrow text-[10px]" style="color: var(--ink-faint);">authored toward v1.0 target</div>
+        <div class="mono font-bold mt-0.5" style="font-size: 1.6rem; color: var(--ink);">
+          ${authored}<span style="color: var(--ink-faint);">/${target}</span>
+          <span class="text-sm font-normal" style="color: var(--accent);">tasks</span>
+        </div>
+      </div>
+      <div class="text-right">
+        <div class="eyebrow text-[10px]" style="color: var(--ink-faint);">not yet authored</div>
+        <div class="mono font-bold mt-0.5" style="font-size: 1.6rem; color: var(--dim);">${gap}</div>
+      </div>
+    </div>
+    <div class="w-full h-3 rounded-full overflow-hidden relative" style="background: var(--bg-3); border:1px solid var(--line);">
+      <div class="seg h-full rounded-full" style="width:${authoredPct}%; background: var(--accent);"></div>
+    </div>
+    <div class="mt-1 text-[10px] mono flex justify-between" style="color: var(--ink-faint);">
+      <span>${Math.round(authoredPct)}% of the ~${target}-task target authored</span>
+      <span>${gap} unbuilt slot${gap === 1 ? "" : "s"} remain</span>
+    </div>`;
+  root.appendChild(funnel);
+
+  // -- segmented breakdown card: validated / wired / planned -----------------
+  const v = s.validated || 0, w = s.wired || 0, p = s.planned || 0;
+  const tot = Math.max(1, v + w + p);
+  const seg = el("div", "panel lg:col-span-2 px-4 py-3.5");
+  seg.style.borderColor = "var(--line)";
+  const row = (n, label, col) =>
+    `<div class="flex items-center justify-between">
+       <span class="inline-flex items-center gap-1.5 eyebrow text-[10px]" style="color:${col};">
+         <span class="w-2.5 h-2.5 rounded-sm" style="background:${col};"></span>${label}</span>
+       <span class="mono font-bold text-base" style="color: var(--ink);">${n}</span>
+     </div>`;
+  seg.innerHTML = `
+    <div class="eyebrow text-[10px] mb-2" style="color: var(--ink-faint);">implementation breakdown · authored = ${v + w + p}</div>
+    <div class="w-full h-3 rounded-full overflow-hidden flex mb-3" style="background: var(--bg-3); border:1px solid var(--line);">
+      <div class="seg h-full" style="width:${(v / tot) * 100}%; background: var(--pass);"></div>
+      <div class="seg h-full" style="width:${(w / tot) * 100}%; background: var(--advisory);"></div>
+      <div class="seg h-full" style="width:${(p / tot) * 100}%; background: var(--dim);"></div>
+    </div>
+    <div class="space-y-1.5">
+      ${row(v, "validated", "var(--pass)")}
+      ${row(w, "wired", "var(--advisory)")}
+      ${row(p, "planned", "var(--dim)")}
+    </div>`;
+  root.appendChild(seg);
+}
+
+function renderTpFilters(s) {
+  const root = $("#tpFilters");
+  root.replaceChildren();
+  const opts = [
+    ["all", "all", s.authored || 0, "var(--ink-dim)"],
+    ["validated", "validated", s.validated || 0, "var(--pass)"],
+    ["wired", "wired", s.wired || 0, "var(--advisory)"],
+    ["planned", "planned", s.planned || 0, "var(--dim)"],
+  ];
+  for (const [val, label, count, col] of opts) {
+    const active = tpFilter === val;
+    const chip = el("button", "px-2.5 py-1 rounded-md text-[11px] mono transition flex items-center gap-1.5");
+    chip.style.cssText = active
+      ? `background:${col === "var(--ink-dim)" ? "var(--bg-3)" : col}; color:${col === "var(--ink-dim)" ? "var(--ink)" : "#0a0c10"}; border:1px solid ${col};`
+      : `background: var(--bg); color: var(--ink-dim); border:1px solid var(--line-2);`;
+    chip.innerHTML = `${esc(label)} <span style="opacity:.75;">${count}</span>`;
+    chip.addEventListener("click", () => { tpFilter = val; if (SNAP) renderTaskProgress(SNAP); });
+    root.appendChild(chip);
+  }
+}
+
+function renderTpGrid(items) {
+  const root = $("#tpGrid");
+  const empty = $("#tpEmpty");
+  root.replaceChildren();
+
+  // filter
+  let list = items.slice();
+  if (tpFilter !== "all") list = list.filter(i => i.status === tpFilter);
+
+  // sort
+  const statusRank = { validated: 0, wired: 1, planned: 2 };       // built-first
+  const statusRankGap = { planned: 0, wired: 1, validated: 2 };    // gap-first
+  list.sort((a, b) => {
+    if (tpSort === "task") return a.task_id.localeCompare(b.task_id);
+    if (tpSort === "runs") return (b.n_runs - a.n_runs) || a.task_id.localeCompare(b.task_id);
+    const rank = tpSort === "status-gap" ? statusRankGap : statusRank;
+    const d = (rank[a.status] ?? 9) - (rank[b.status] ?? 9);
+    return d || a.task_id.localeCompare(b.task_id);
+  });
+
+  if (list.length === 0) {
+    empty.classList.remove("hidden");
+    empty.textContent = `No ${tpFilter === "all" ? "" : tpFilter + " "}tasks.`;
+    return;
+  }
+  empty.classList.add("hidden");
+
+  for (const it of list) {
+    const meta = TP_STATUS[it.status] || TP_STATUS.planned;
+    const card = el("div", "panel card-hover px-3 py-2.5");
+    card.style.cssText = `border-color: var(--line); border-left: 3px solid ${meta.col};`;
+
+    const layerTags = (it.layers || []).map(l =>
+      `<span class="inline-block px-1 rounded mono text-[9px]" style="background: var(--bg-3); color: var(--ink-dim);">${esc(l)}</span>`).join(" ");
+    const ref = it.has_reference_solution
+      ? `<span title="has a reference solution" style="color: var(--pass);">✓ ref</span>` : "";
+    const tier = it.tier ? `<span class="mono text-[9px]" style="color: var(--ink-faint);">${esc(it.tier)}</span>` : "";
+    const setName = it.set_name ? `<span class="text-[9px]" style="color: var(--ink-faint);">${esc(it.set_name)}</span>` : "";
+
+    card.innerHTML = `
+      <div class="flex items-start justify-between gap-2">
+        <span class="mono text-[12px] font-semibold leading-tight" style="color: var(--ink); word-break: break-all;">${esc(it.task_id)}</span>
+        <span class="shrink-0 inline-block px-1.5 py-0.5 rounded border eyebrow text-[9px]"
+              style="color:${meta.col}; border-color:${meta.col}; background: var(--bg-3);">${meta.label}</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px]">
+        <span style="color: var(--ink-dim);">${esc(it.capability || "—")}</span>
+        ${tier}${setName}
+      </div>
+      <div class="flex flex-wrap items-center gap-1 mt-1.5">${layerTags}</div>
+      <div class="flex items-center justify-between gap-2 mt-2 pt-2 text-[10px] mono" style="border-top:1px solid var(--line); color: var(--ink-faint);">
+        <span><span style="color: var(--pass);">${it.n_pass}</span>/<span style="color: var(--ink-dim);">${it.n_runs}</span> pass/runs</span>
+        <span>${ref}</span>
+      </div>`;
+
+    // Optional: clicking a task that has runs scrolls the matrix into view and
+    // opens its latest run report (cheap, read-only). Tasks with no runs are
+    // inert in the catalog (nothing to open).
+    if (it.n_runs > 0) {
+      card.style.cursor = "pointer";
+      card.title = `${it.task_id} — open latest run / jump to matrix`;
+      card.addEventListener("click", () => openLatestRunForTask(it.task_id));
+    }
+    root.appendChild(card);
+  }
+}
+
+// Find the newest run for a task across all products and open its detail modal;
+// if none resolves, just scroll the matrix into view. Read-only, best-effort.
+function openLatestRunForTask(taskId) {
+  if (!SNAP) return;
+  const runs = (SNAP.runs || []).filter(r => r.task_id === taskId);
+  if (runs.length) {
+    // runs are payload-sorted oldest→newest; take the last.
+    openRunModal(runs[runs.length - 1].run_id);
+  } else {
+    $("#matrix").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+// ---- render: matrix --------------------------------------------------------
+function renderMatrix(snap) {
+  const table = $("#matrix");
+  table.replaceChildren();
+  const products = snap.products;
+  const ungrounded = new Set(snap.ungrounded_capabilities || []);
+  const leaders = snap.leaders || {};
+  const runIdx = indexRuns(snap);
+
+  // group tasks by capability for readable section rows
+  const byCap = new Map();
+  for (const task of snap.tasks) {
+    if (!byCap.has(task.capability_bucket)) byCap.set(task.capability_bucket, []);
+    byCap.get(task.capability_bucket).push(task);
+  }
+  // also include capabilities that appear only via runs (task .md absent)
+  for (const cap of snap.capabilities) if (!byCap.has(cap)) byCap.set(cap, []);
+
+  // header
+  const thead = el("thead");
+  const hr = el("tr");
+  hr.style.background = "var(--bg-3)";
+  const th0 = el("th", "text-left px-3 py-2.5 eyebrow text-[10px] sticky left-0 z-10", "task");
+  th0.style.cssText += "color: var(--ink-dim); background: var(--bg-3);";
+  hr.appendChild(th0);
+  for (const p of products) {
+    const th = el("th", "px-2 py-2.5 text-[11px] font-medium text-center align-bottom mono");
+    th.style.color = "var(--ink)";
+    th.title = p;
+    th.innerHTML = shortProduct(p);
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  const caps = Array.from(byCap.keys()).sort();
+  for (const cap of caps) {
+    // capability section header row
+    const secTr = el("tr");
+    secTr.style.cssText = "background: var(--bg); border-top: 1px solid var(--line-2);";
+    const lead = leaders[cap];
+    const warn = ungrounded.has(cap)
+      ? ` <span title="ungrounded: no task here run by ≥2 products" style="color: var(--advisory);">⚠</span>` : "";
+    const leadTxt = lead
+      ? ` <span class="text-[10px]" style="color: var(--ink-faint);">leader: <span class="mono" style="color: var(--accent);">${esc(lead)}</span></span>` : "";
+    const cell = el("td", "px-3 py-1.5 eyebrow text-[11px] sticky left-0 z-10");
+    cell.style.cssText += "color: var(--ink-dim); background: var(--bg);";
+    cell.colSpan = 1;
+    cell.innerHTML = esc(cap) + warn;
+    secTr.appendChild(cell);
+    const spread = el("td", "px-3 py-1.5 text-xs");
+    spread.colSpan = products.length;
+    spread.innerHTML = leadTxt;
+    secTr.appendChild(spread);
+    tbody.appendChild(secTr);
+
+    const tasks = byCap.get(cap).slice().sort((a, b) => a.task_id.localeCompare(b.task_id));
+    for (const task of tasks) {
+      const tr = el("tr", "row-hover");
+      tr.style.borderTop = "1px solid var(--line)";
+      tr.addEventListener("mouseenter", () => { tr.style.background = "var(--bg-3)"; });
+      tr.addEventListener("mouseleave", () => { tr.style.background = ""; });
+      const nameTd = el("td", "px-3 py-1.5 text-xs sticky left-0 z-10 whitespace-nowrap");
+      nameTd.style.cssText += "color: var(--ink-dim); background: var(--bg);";
+      nameTd.title = task.prompt_excerpt || task.task_id;
+      const layerTags = (task.layers || []).map(l =>
+        `<span class="ml-1 inline-block px-1 rounded mono text-[9px]" style="background: var(--bg-3); color: var(--ink-dim);">${esc(l)}</span>`).join("");
+      const tierTag = task.tier ? `<span class="ml-1 mono text-[9px]" style="color: var(--ink-faint);">${esc(task.tier)}</span>` : "";
+      nameTd.innerHTML = `<span class="mono" style="color: var(--ink);">${esc(task.task_id)}</span>${tierTag}${layerTags}`;
+      tr.appendChild(nameTd);
+
+      for (const p of products) {
+        const runs = runIdx.get(task.task_id + " " + p) || [];
+        const td = el("td", "p-1 text-center");
+        const n = runs.length;
+        const nPass = runs.filter(r => r.passed).length;
+        const rate = n ? nPass / n : 0;
+        const st = cellStyle(rate, n);
+
+        const btn = el("button",
+          "cell-btn w-full rounded-md px-2 py-1.5 text-[11px] font-semibold leading-tight mono");
+        btn.style.background = st.bg;
+        btn.style.color = st.fg;
+        if (st.border) btn.style.border = st.border;
+        if (n === 0) {
+          btn.disabled = true;
+          btn.innerHTML = `<span class="opacity-50">—</span>`;
+          btn.title = `${task.task_id} × ${p}: not yet attempted`;
+        } else {
+          const latest = runs[runs.length - 1];
+          const dupTag = n > 1 ? `<span class="opacity-70"> (${n})</span>` : "";
+          btn.innerHTML = `${nPass}/${n}${dupTag}`;
+          btn.title = `${task.task_id} × ${p}\n${nPass}/${n} passed (${pct(rate)})\nclick → run detail (+ full report): ${latest.run_id}`;
+          btn.addEventListener("click", () => openRunModal(latest.run_id));
+        }
+        td.appendChild(btn);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  }
+  table.appendChild(tbody);
+}
+
+// ---- render: failures ------------------------------------------------------
+function renderFailures(snap) {
+  const root = $("#failures");
+  root.replaceChildren();
+  const fails = snap.runs.filter(r => !r.passed)
+    .sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
+  $("#failCount").textContent = `(${fails.length})`;
+  if (fails.length === 0) {
+    root.appendChild(el("div", "text-sm italic", "No failures.")).style.color = "var(--ink-faint)";
+    return;
+  }
+  for (const r of fails) {
+    const card = el("button", "w-full text-left rounded-lg card-hover px-3 py-2.5");
+    card.style.cssText = "border:1px solid rgba(224,49,49,0.22); background: rgba(224,49,49,0.05);";
+    card.addEventListener("mouseenter", () => { card.style.background = "rgba(224,49,49,0.09)"; });
+    card.addEventListener("mouseleave", () => { card.style.background = "rgba(224,49,49,0.05)"; });
+    const isNoEdits = r.overall.toUpperCase() === "FAIL_NO_EDITS";
+    const tag = isNoEdits
+      ? `<span class="text-[10px] px-1.5 py-0.5 rounded mono eyebrow" style="background: rgba(232,146,12,0.12); color: var(--advisory); border:1px solid rgba(232,146,12,0.4);">NO EDITS</span>`
+      : `<span class="text-[10px] px-1.5 py-0.5 rounded mono eyebrow" style="background: rgba(224,49,49,0.1); color: var(--fail); border:1px solid rgba(224,49,49,0.4);">FAIL</span>`;
+    card.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <span class="mono text-sm" style="color: var(--ink);">${esc(r.task_id)}</span>
+        ${tag}
+      </div>
+      <div class="text-xs mt-0.5">
+        <span class="mono" style="color: var(--accent);">${esc(r.product)}</span>
+        ${r.blocker ? `<span style="color: var(--ink-faint);"> · </span><span style="color: var(--fail);">${esc(r.blocker.split("\n")[0])}</span>` : ""}
+      </div>`;
+    card.addEventListener("click", () => openRunModal(r.run_id));
+    root.appendChild(card);
+  }
+}
+
+// ---- render: coverage gaps -------------------------------------------------
+function renderCoverage(snap) {
+  const root = $("#coverage");
+  root.replaceChildren();
+  const gaps = snap.coverage_gaps || [];
+  if (gaps.length === 0) {
+    const d = el("div", "text-sm italic", "Every task has been attempted by every observed product.");
+    d.style.color = "var(--ink-faint)";
+    root.appendChild(d);
+    return;
+  }
+  for (const g of gaps) {
+    const card = el("div", "rounded-lg panel card-hover px-3 py-2.5");
+    card.style.borderColor = "var(--line)";
+    const missing = g.products_missing.map(p =>
+      `<span class="inline-block px-1.5 py-0.5 rounded mono text-[10px] mr-1" style="background: var(--bg-3); color: var(--ink-dim);">${esc(p)}</span>`).join("");
+    card.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <span class="mono text-sm" style="color: var(--ink-dim);">${esc(g.task_id)}</span>
+        <span class="text-[10px]" style="color: var(--ink-faint);">${esc(g.capability)}</span>
+      </div>
+      <div class="mt-1.5 text-xs"><span class="mr-1" style="color: var(--ink-faint);">not run by:</span>${missing}</div>`;
+    root.appendChild(card);
+  }
+}
+
+// ---- render: head-to-head --------------------------------------------------
+function renderHeadToHead(snap) {
+  const root = $("#headToHead");
+  root.replaceChildren();
+  const hh = snap.head_to_head || [];
+  if (hh.length === 0) {
+    const d = el("div", "text-sm italic p-4",
+      "No task has been run by ≥2 products yet — every capability cell aggregates disjoint tasks.");
+    d.style.color = "var(--ink-faint)";
+    root.appendChild(d);
+    return;
+  }
+  // union of products that appear in any head-to-head row, stable order
+  const prodSet = [];
+  for (const row of hh) for (const p of Object.keys(row.products)) if (!prodSet.includes(p)) prodSet.push(p);
+  prodSet.sort();
+
+  const table = el("table", "w-full text-sm border-collapse");
+  const thead = el("thead");
+  const hr = el("tr");
+  hr.style.background = "var(--bg-3)";
+  const th0 = el("th", "text-left px-3 py-2.5 eyebrow text-[10px]", "task"); th0.style.color = "var(--ink-dim)";
+  const th1 = el("th", "text-left px-3 py-2.5 eyebrow text-[10px]", "capability"); th1.style.color = "var(--ink-dim)";
+  hr.appendChild(th0); hr.appendChild(th1);
+  for (const p of prodSet) {
+    const th = el("th", "px-2 py-2.5 text-[11px] font-medium text-center mono");
+    th.style.color = "var(--ink)";
+    th.title = p; th.innerHTML = shortProduct(p);
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  for (const row of hh) {
+    const tr = el("tr");
+    tr.style.borderTop = "1px solid var(--line)";
+    const t0 = el("td", "px-3 py-1.5 mono text-xs", esc(row.task_id)); t0.style.color = "var(--ink-dim)";
+    const t1 = el("td", "px-3 py-1.5 text-xs", esc(row.capability)); t1.style.color = "var(--ink-faint)";
+    tr.appendChild(t0); tr.appendChild(t1);
+    for (const p of prodSet) {
+      const c = row.products[p];
+      const td = el("td", "px-2 py-1.5 text-center text-xs mono");
+      if (!c) { td.innerHTML = `<span style="color: var(--ink-faint);">—</span>`; }
+      else {
+        const ok = c.pass_rate >= 0.999;
+        const col = ok ? "var(--pass)" : (c.pass_rate <= 0.001 ? "var(--fail)" : "var(--advisory)");
+        td.innerHTML = `<span class="font-semibold" style="color:${col};">${c.n_pass}/${c.n}</span> <span style="color: var(--ink-faint);">${pct(c.pass_rate)}</span>`;
+      }
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  root.appendChild(table);
+}
+
+// ---- full single-run report modal (iframe over /api/run/{id}/report) -------
+// The matrix cells + failure cards open the lightweight /api/run JSON detail
+// (openRunModal below); that detail offers an "open full report" button which
+// opens THIS (the rich self-contained render.py report) in an iframe, plus an
+// "open in new tab" link. Both views are reachable; the lightweight detail is
+// the default click target so the cheap round-trip renders first.
+function openReportModal(runId) {
+  const modal = $("#reportModal");
+  const url = `/api/run/${encodeURIComponent(runId)}/report`;
+  $("#rTitle").textContent = "single-run report";
+  $("#rSub").textContent = runId;
+  $("#rOpenTab").href = url;
+  // Point the iframe at the bridge route. The route always returns an HTML page
+  // (200 report / 404 / 500), so the frame shows something even on a bad id.
+  $("#rFrame").src = url;
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+}
+
+function closeReportModal() {
+  const modal = $("#reportModal");
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
+  // Blank the iframe so the next open starts clean (and stops any in-flight load).
+  $("#rFrame").src = "about:blank";
+}
+
+// ---- run detail modal (lightweight JSON fallback; not click-wired) ---------
+async function openRunModal(runId) {
+  const modal = $("#modal");
+  $("#mTitle").textContent = runId;
+  $("#mSub").textContent = "loading…";
+  $("#mBody").replaceChildren();
+  // The lightweight detail also offers the FULL self-contained report.
+  const full = $("#mFullReport");
+  full.classList.remove("hidden");
+  full.onclick = () => { closeModal(); openReportModal(runId); };
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  try {
+    const res = await fetch(`/api/run/${encodeURIComponent(runId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderRunDetail(data.run, data.task);
+  } catch (e) {
+    $("#mSub").textContent = "";
+    $("#mBody").innerHTML = `<div class="text-sm" style="color: var(--fail);">Failed to load run: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderRunDetail(run, task) {
+  $("#mTitle").innerHTML = `<span class="mono text-sm">${esc(run.task_id)}</span>`;
+  $("#mSub").textContent = run.run_id;
+  const body = $("#mBody");
+  body.replaceChildren();
+
+  // outcome + meta row
+  const outcomeColor = run.passed ? "var(--pass)" : "var(--fail)";
+  const meta = el("div", "grid grid-cols-2 sm:grid-cols-4 gap-2");
+  const m = (label, val, cls) => {
+    const d = el("div", "rounded panel px-2.5 py-1.5");
+    d.style.borderColor = "var(--line)";
+    d.appendChild(el("div", "eyebrow text-[9px]", esc(label))).style.color = "var(--ink-faint)";
+    const v = el("div", "text-sm font-semibold mono mt-0.5", val);
+    v.style.color = cls || "var(--ink)";
+    d.appendChild(v);
+    return d;
+  };
+  meta.appendChild(m("outcome", esc(run.overall), outcomeColor));
+  meta.appendChild(m("product", `<span style="color: var(--accent);" class="text-xs">${esc(run.product)}</span>`));
+  meta.appendChild(m("duration", esc(fmtDur(run.duration_s))));
+  meta.appendChild(m("cost", esc(fmtCost(run.cost_usd))));
+  body.appendChild(meta);
+
+  // task context (if the .md exists)
+  if (task) {
+    const ctx = el("div", "rounded-lg panel p-3 space-y-1");
+    ctx.style.borderColor = "var(--line)";
+    ctx.appendChild(el("div", "eyebrow text-[9px]", "task")).style.color = "var(--ink-faint)";
+    const layerTags = (task.layers || []).map(l =>
+      `<span class="ml-1 inline-block px-1 rounded mono text-[10px]" style="background: var(--bg-3); color: var(--ink-dim);">${esc(l)}</span>`).join("");
+    const ctxLine = el("div", "text-xs",
+      `${esc(task.capability_bucket)}${task.tier ? " · " + esc(task.tier) : ""}${task.set_name ? " · " + esc(task.set_name) : ""}${layerTags}`);
+    ctxLine.style.color = "var(--ink-dim)";
+    ctx.appendChild(ctxLine);
+    if (task.prompt_excerpt) {
+      const pe = el("div", "text-xs mt-1 italic", esc(task.prompt_excerpt));
+      pe.style.color = "var(--ink-dim)";
+      ctx.appendChild(pe);
+    }
+    body.appendChild(ctx);
+  }
+
+  // blocker (why not pass)
+  if (run.blocker) {
+    const b = el("div", "rounded-lg p-3");
+    b.style.cssText = "border:1px solid rgba(224,49,49,0.3); background: rgba(224,49,49,0.05);";
+    b.appendChild(el("div", "eyebrow text-[9px] mb-1", "blocker")).style.color = "var(--fail)";
+    const pre = el("pre", "detail text-xs mono", esc(run.blocker)); pre.style.color = "var(--fail)";
+    b.appendChild(pre);
+    body.appendChild(b);
+  }
+
+  // agent summary
+  if (run.summary) {
+    const s = el("div", "rounded-lg panel p-3");
+    s.style.borderColor = "var(--line)";
+    s.appendChild(el("div", "eyebrow text-[9px] mb-1", "agent summary")).style.color = "var(--ink-faint)";
+    const pre = el("pre", "detail text-xs", esc(run.summary)); pre.style.color = "var(--ink-dim)";
+    s.appendChild(pre);
+    body.appendChild(s);
+  }
+
+  // per-layer results
+  const lr = run.layer_results || [];
+  const layerWrap = el("div");
+  layerWrap.appendChild(el("div", "eyebrow text-[9px] mb-1.5", "verifier layers")).style.color = "var(--ink-faint)";
+  if (lr.length === 0) {
+    const d = el("div", "text-xs italic",
+      "No captured verifier output for this run (overall is authoritative).");
+    d.style.color = "var(--ink-faint)";
+    layerWrap.appendChild(d);
+  } else {
+    for (const l of lr) {
+      const row = el("div", "rounded panel p-2 mb-1.5");
+      row.style.borderColor = "var(--line)";
+      row.innerHTML = `<div class="flex items-center gap-2">
+          <span class="mono text-xs font-semibold" style="color: var(--ink);">${esc(l.key)}</span>
+          ${statusBadge(l.status)}
+        </div>`;
+      if (l.detail) {
+        const pre = el("pre", "detail text-[11px] mt-1 mono", esc(l.detail));
+        pre.style.color = "var(--ink-dim)";
+        row.appendChild(pre);
+      }
+      layerWrap.appendChild(row);
+    }
+  }
+  body.appendChild(layerWrap);
+}
+
+function closeModal() {
+  const modal = $("#modal");
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
+  const full = $("#mFullReport");
+  full.classList.add("hidden");
+  full.onclick = null;
+}
+
+// ---- top-level render ------------------------------------------------------
+function render(snap) {
+  SNAP = snap;
+  renderTotals(snap.totals);
+  renderTaskProgress(snap);
+  renderMatrix(snap);
+  renderFailures(snap);
+  renderCoverage(snap);
+  renderHeadToHead(snap);
+  $("#generatedAt").textContent = snap.generated_at || "";
+  $("#schemaTag").textContent = snap.schema || "";
+}
+
+// ---- data fetch + live update ----------------------------------------------
+async function fetchSnapshot() {
+  const q = latestOnly ? "?latest_only=true" : "";
+  const res = await fetch(`/api/snapshot${q}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function setLive(state, label) {
+  const pip = $("#livePip"), lbl = $("#liveLabel");
+  const colors = { live: "var(--pass)", poll: "var(--verifier)", off: "var(--ink-faint)" };
+  pip.className = "w-2 h-2 rounded-full";
+  pip.style.color = colors[state] || colors.off;
+  pip.style.background = colors[state] || colors.off;
+  lbl.textContent = label;
+}
+
+let sse = null;
+let pollTimer = null;
+
+// /events only streams the all-attempts snapshot; when latest_only is toggled we
+// always re-fetch via /api/snapshot so the matrix honors the dedupe.
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  setLive("poll", "polling");
+  const tick = async () => {
+    try { render(await fetchSnapshot()); setLive(pollTimer ? "poll" : "live", pollTimer ? "polling" : "live"); }
+    catch (e) { setLive("off", "offline"); }
+  };
+  tick();
+  pollTimer = setInterval(tick, 3000);
+}
+
+function startSSE() {
+  // Try the SSE stream; on any error fall back to polling. When latest_only is
+  // on we ignore SSE pushes (they're all-attempts) and poll the deduped view.
+  try {
+    sse = new EventSource("/events");
+    sse.onopen = () => setLive("live", "live");
+    sse.onmessage = (ev) => {
+      if (latestOnly) return;            // deduped view comes from /api/snapshot
+      try { render(JSON.parse(ev.data)); setLive("live", "live"); } catch (_) {}
+    };
+    sse.onerror = () => {
+      // EventSource auto-reconnects; if it never opens we still have polling.
+      if (!pollTimer) startPolling();
+    };
+  } catch (_) {
+    startPolling();
+  }
+}
+
+// ---- launch a run ----------------------------------------------------------
+// The dashboard's single write action. Fetches /api/launch/options once, lets
+// the user pick (task, route, model[, ue_root, live]), POSTs /api/launch behind
+// a confirm(), then polls the jobs feed until each job reaches a terminal state.
+//
+// Route-aware: the model <select> repopulates from models_by_route[route] every
+// time the route changes (baseline/unreal-mcp -> native Claude ids;
+// openrouter/bare -> provider/model ids). The UE-root field prefills from
+// ue_root_default (with an "auto-detected" badge), and live-project auto-checks
+// for the routes the SERVER marks live_editor — the client keeps no lane list of
+// its own, so /api/launch/options stays the one place a lane is named.
+let LAUNCH_OPTS = null;
+
+async function loadLaunchOptions() {
+  try {
+    const res = await fetch("/api/launch/options");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    LAUNCH_OPTS = await res.json();
+  } catch (_) {
+    LAUNCH_OPTS = { tasks: [], routes: [], models_by_route: {}, ue_root_default: null };
+  }
+  // tasks → <select> (stems; the .md is stripped server-side)
+  const taskSel = $("#launchTask");
+  taskSel.replaceChildren();
+  if (!LAUNCH_OPTS.tasks || !LAUNCH_OPTS.tasks.length) {
+    const o = el("option", "", "(no tasks/*.md found)");
+    o.disabled = true; taskSel.appendChild(o);
+  }
+  for (const t of (LAUNCH_OPTS.tasks || [])) {
+    const o = document.createElement("option");
+    o.value = t; o.textContent = t;
+    taskSel.appendChild(o);
+  }
+  // routes → <select> (value = route id; show each route's label)
+  const routeSel = $("#launchRoute");
+  routeSel.replaceChildren();
+  const routes = LAUNCH_OPTS.routes || [];
+  if (!routes.length) {
+    const o = el("option", "", "(no routes)");
+    o.disabled = true; routeSel.appendChild(o);
+  }
+  for (const r of routes) {
+    const o = document.createElement("option");
+    o.value = r.id; o.textContent = r.label || r.id;
+    routeSel.appendChild(o);
+  }
+  // model <select> follows the selected route.
+  populateModelsForRoute(routeSel.value);
+
+  // UE root: prefill from the server-detected default; flag it as auto-detected.
+  const ueInput = $("#launchUeRoot");
+  if (LAUNCH_OPTS.ue_root_default) ueInput.value = LAUNCH_OPTS.ue_root_default;
+  syncUeBadge();
+  // live-project follows the route (only unreal-mcp needs a live editor).
+  syncLiveForRoute(routeSel.value);
+  syncLaunchHint(routeSel.value);
+}
+
+// Repopulate the model <select> from models_by_route[route].
+function populateModelsForRoute(route) {
+  const sel = $("#launchModel");
+  sel.replaceChildren();
+  const models = (LAUNCH_OPTS && LAUNCH_OPTS.models_by_route && LAUNCH_OPTS.models_by_route[route]) || [];
+  if (!models.length) {
+    const o = el("option", "", "(no models for this route)");
+    o.disabled = true; sel.appendChild(o);
+    return;
+  }
+  for (const m of models) {
+    const o = document.createElement("option");
+    o.value = m; o.textContent = m;
+    sel.appendChild(o);
+  }
+}
+
+// Show the "auto-detected" badge only while the field equals the server default.
+function syncUeBadge() {
+  const ueInput = $("#launchUeRoot");
+  const badge = $("#ueAutoBadge");
+  const def = LAUNCH_OPTS && LAUNCH_OPTS.ue_root_default;
+  if (def && ueInput.value.trim() === def) badge.classList.remove("hidden");
+  else badge.classList.add("hidden");
+}
+
+// Does the SERVER mark this route as needing a live editor? Unknown route (or an
+// older server that predates the flag) → false, matching the headless default.
+function routeNeedsEditor(route) {
+  const routes = (LAUNCH_OPTS && LAUNCH_OPTS.routes) || [];
+  const r = routes.find((x) => x.id === route);
+  return !!(r && r.live_editor);
+}
+
+// An editor-backed route (unreal-mcp) needs --live-project → auto-check it; the
+// file-only routes uncheck.
+function syncLiveForRoute(route) {
+  $("#launchLive").checked = routeNeedsEditor(route);
+}
+
+function syncLaunchHint(route) {
+  const hint = $("#launchHint");
+  hint.textContent = routeNeedsEditor(route)
+    ? "needs a live UE editor (its MCP server runs inside one)"
+    : "runs headless via run.py — no editor";
+}
+
+// Remember which job log tails the user has expanded, so a re-render keeps them
+// open across the 2s poll.
+const openJobLogs = new Set();   // job_id
+
+async function cancelJob(jobId) {
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (!j.cancelled) {
+      // Already finished (or never running) — the next poll reflects the truth.
+    }
+  } catch (e) {
+    alert(`Cancel failed: ${e.message}`);
+  }
+}
+
+function renderJob(job) {
+  const colors = {
+    queued:  "border-color: var(--line-2); color: var(--ink-dim);",
+    running: "border-color: rgba(86,182,255,0.5); color: var(--verifier);",
+    done:    "border-color: rgba(52,211,153,0.5); color: var(--pass);",
+    failed:  "border-color: rgba(244,63,94,0.5); color: var(--fail);",
+  };
+  const style = colors[job.status] || colors.queued;
+  const row = el("div", "rounded px-2.5 py-1.5 text-xs");
+  row.style.cssText = `background: var(--bg); border:1px solid; ${style}`;
+  const dur = job.duration_s != null ? ` · ${job.duration_s.toFixed(1)}s` : "";
+  const rc = job.returncode != null ? ` · rc=${job.returncode}` : "";
+  const head = el("div", "flex items-center justify-between gap-2");
+  head.innerHTML = `
+    <span class="mono truncate" style="color: var(--ink-dim);">${esc(job.task_id)} <span style="color: var(--ink-faint);">×</span> ${esc(job.model)}</span>
+    <span class="flex items-center gap-2 shrink-0">
+      <span class="uppercase font-semibold tracking-wide mono">${esc(job.status)}${rc}${dur}</span>
+    </span>`;
+  // Cancel control while the job is live.
+  if (job.status === "running" || job.status === "queued") {
+    const cancel = el("button",
+      "shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide mono transition");
+    cancel.style.cssText = "border:1px solid rgba(244,63,94,0.5); color: var(--fail);";
+    cancel.addEventListener("mouseenter", () => cancel.style.background = "rgba(244,63,94,0.18)");
+    cancel.addEventListener("mouseleave", () => cancel.style.background = "");
+    cancel.textContent = "cancel";
+    cancel.addEventListener("click", () => cancelJob(job.job_id));
+    head.querySelector("span.flex").appendChild(cancel);
+  }
+  row.appendChild(head);
+  if (job.error) { const e = el("div", "mt-0.5", esc(job.error)); e.style.color = "var(--fail)"; row.appendChild(e); }
+
+  // Live-updating, collapsible log tail. Available for running jobs (to watch
+  // progress) and finished jobs (to read the outcome).
+  if (job.log) {
+    const open = openJobLogs.has(job.job_id);
+    const toggle = el("button", "text-[10px] mt-1 transition");
+    toggle.style.color = "var(--ink-faint)";
+    toggle.textContent = open ? "hide log ▴" : (job.status === "running" ? "show live log ▾" : "show log ▾");
+    const tail = job.log.split("\n").slice(-12).join("\n");
+    const pre = el("pre",
+      `detail text-[10px] mono mt-1 max-h-40 overflow-y-auto ${open ? "" : "hidden"}`,
+      esc(tail));
+    pre.style.color = "var(--ink-faint)";
+    toggle.addEventListener("click", () => {
+      const nowOpen = pre.classList.toggle("hidden") === false;
+      if (nowOpen) openJobLogs.add(job.job_id); else openJobLogs.delete(job.job_id);
+      toggle.textContent = nowOpen ? "hide log ▴" : (job.status === "running" ? "show live log ▾" : "show log ▾");
+    });
+    row.appendChild(toggle);
+    row.appendChild(pre);
+  }
+  return row;
+}
+
+let JOBS = [];           // latest /api/jobs feed (already newest-first)
+let lastDoneCount = 0;   // when a job newly finishes "done", refresh the matrix
+
+function paintJobs() {
+  const wrap = $("#jobsWrap"), list = $("#jobsList");
+  if (!JOBS.length) { wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  list.replaceChildren();
+  for (const job of JOBS) list.appendChild(renderJob(job));
+}
+
+// Single feed poll (every ~2s) drives the whole jobs list — newest first per the
+// API contract. We start it lazily (on first panel expand) and leave it running.
+let jobsPollTimer = null;
+function startJobsPolling() {
+  if (jobsPollTimer) return;
+  const tick = async () => {
+    try {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      JOBS = await res.json();
+      paintJobs();
+      // When the count of finished "done" jobs grows, a new runs/<id>/result.json
+      // exists → nudge the matrix (SSE/poll also catches it, but this is instant).
+      const done = JOBS.filter(j => j.status === "done").length;
+      if (done > lastDoneCount) { try { render(await fetchSnapshot()); } catch (_) {} }
+      lastDoneCount = done;
+    } catch (_) { /* transient; keep polling */ }
+  };
+  tick();
+  jobsPollTimer = setInterval(tick, 2000);
+}
+
+async function doLaunch() {
+  const btn = $("#launchBtn");
+  const task = $("#launchTask").value;
+  const route = $("#launchRoute").value;
+  const model = $("#launchModel").value;
+  const ueRoot = $("#launchUeRoot").value.trim();
+  const live = $("#launchLive").checked;
+  if (!task) { alert("Pick a task first."); return; }
+  if (!route) { alert("Pick a route first."); return; }
+  if (!model) { alert("Pick a model first."); return; }
+  // Gate behind a confirm so a launch is never accidental.
+  if (!confirm("This starts a real run via run.py and may drive UE — continue?")) return;
+
+  btn.disabled = true;
+  const prev = btn.textContent; btn.textContent = "launching…";
+  try {
+    // Send (route, model) — the server composes the backend:model slug. Empty
+    // ue_root is omitted so the server auto-locates.
+    const body = { task_id: task, route, model };
+    if (ueRoot) body.ue_root = ueRoot;
+    if (live) body.live_project = true;
+    const res = await fetch("/api/launch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j.detail) detail = j.detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    // 202 {job_id} — the feed poll picks the job up on its next tick.
+    await res.json();
+    startJobsPolling();
+  } catch (e) {
+    alert(`Launch rejected: ${e.message}`);
+  } finally {
+    btn.disabled = false; btn.textContent = prev;
+  }
+}
+
+// ---- wire up ---------------------------------------------------------------
+$("#mClose").addEventListener("click", closeModal);
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+$("#rClose").addEventListener("click", closeReportModal);
+$("#reportModal").addEventListener("click", (e) => { if (e.target.id === "reportModal") closeReportModal(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  closeModal();
+  closeReportModal();
+});
+
+// Pipeline graph: collapsible (shown by default).
+$("#pipelineToggle").addEventListener("click", () => {
+  const body = $("#pipelineBody");
+  const hidden = body.classList.toggle("hidden");
+  $("#pipelineToggle").textContent = hidden ? "show ▾" : "hide ▴";
+});
+
+// Task-progress catalog: re-render on sort change (filter chips re-render on click).
+$("#tpSort").addEventListener("change", (e) => {
+  tpSort = e.target.value;
+  if (SNAP) renderTaskProgress(SNAP);
+});
+
+// Launch panel: collapsed by default; load options + start jobs polling on first
+// expand.
+$("#launchToggle").addEventListener("click", async () => {
+  const panel = $("#launchPanel");
+  const hidden = panel.classList.toggle("hidden");
+  $("#launchToggle").textContent = hidden ? "show ▾" : "hide ▴";
+  if (!hidden) {
+    if (LAUNCH_OPTS === null) await loadLaunchOptions();
+    startJobsPolling();   // surface any in-flight / past jobs immediately
+  }
+});
+// Route → repopulate the model menu + re-sync live-project + hint.
+$("#launchRoute").addEventListener("change", (e) => {
+  populateModelsForRoute(e.target.value);
+  syncLiveForRoute(e.target.value);
+  syncLaunchHint(e.target.value);
+});
+// Manual edits to the UE-root field hide/show the auto-detected badge.
+$("#launchUeRoot").addEventListener("input", syncUeBadge);
+$("#launchBtn").addEventListener("click", doLaunch);
+
+$("#latestOnly").addEventListener("change", async (e) => {
+  latestOnly = e.target.checked;
+  try { render(await fetchSnapshot()); } catch (_) {}
+});
+
+// ---- tabs (vanilla, no router) --------------------------------------------
+// Pure client-side show/hide over the three [data-tab-panel] sections. Honors
+// #hash on load + hashchange (default overview). The Launch tab lazily reuses
+// the existing launch init (options fetch + jobs poll) the first time it opens,
+// so the form works whether the user clicks #launchToggle or just visits.
+const LAUNCH_TAB = "launch";
+let launchInited = false;
+async function ensureLaunchInit() {
+  if (launchInited) return;
+  launchInited = true;
+  if (LAUNCH_OPTS === null) await loadLaunchOptions();
+  startJobsPolling();
+}
+function showTab(name) {
+  const valid = ["overview", "results", "launch"];
+  if (!valid.includes(name)) name = "overview";
+  document.querySelectorAll("[data-tab-panel]").forEach(p =>
+    p.hidden = (p.getAttribute("data-tab-panel") !== name));
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    const on = b.getAttribute("data-tab") === name;
+    b.classList.toggle("active", on);
+    b.style.color = on ? "var(--accent)" : "var(--ink-dim)";
+    b.style.boxShadow = on ? "inset 0 -2px 0 var(--accent)" : "none";
+    b.setAttribute("aria-selected", on ? "true" : "false");  // ARIA tabs: announce current
+    b.tabIndex = on ? 0 : -1;                                  // roving tabindex
+  });
+  if (name === LAUNCH_TAB) ensureLaunchInit();
+}
+function activateTab(name) {
+  if (location.hash !== "#" + name) location.hash = name;  // triggers hashchange
+  else showTab(name);
+}
+document.querySelectorAll(".tab-btn").forEach(b =>
+  b.addEventListener("click", () => activateTab(b.getAttribute("data-tab"))));
+// WAI-ARIA tabs keyboard model: ArrowLeft/Right wrap, Home/End jump; focus follows.
+document.getElementById("tabBar").addEventListener("keydown", (e) => {
+  const delta = { ArrowLeft: -1, ArrowRight: 1, Home: "home", End: "end" };
+  if (!(e.key in delta)) return;
+  e.preventDefault();
+  const btns = [...document.querySelectorAll(".tab-btn")];
+  const cur = Math.max(0, btns.findIndex(b => b.getAttribute("aria-selected") === "true"));
+  const d = delta[e.key];
+  const next = d === "home" ? 0 : d === "end" ? btns.length - 1
+                                              : (cur + d + btns.length) % btns.length;
+  activateTab(btns[next].getAttribute("data-tab"));
+  btns[next].focus();
+});
+window.addEventListener("hashchange", () => showTab((location.hash || "#overview").slice(1)));
+showTab((location.hash || "#overview").slice(1));
+
+// Initial load: paint immediately via /api/snapshot, then attach live updates.
+(async () => {
+  try { render(await fetchSnapshot()); }
+  catch (e) { document.body.insertAdjacentHTML("afterbegin",
+    `<div class="p-2 text-sm" style="background: var(--fail); color: #fff;">Failed to load snapshot: ${esc(e.message)}</div>`); }
+  // Prefer SSE for liveness; polling is the fallback + the latest_only path.
+  startSSE();
+  // Safety net: if SSE hasn't opened within 4s, poll regardless.
+  setTimeout(() => { if (!pollTimer && (!sse || sse.readyState !== 1)) startPolling(); }, 4000);
+})();
+</script>
+</body>
+</html>

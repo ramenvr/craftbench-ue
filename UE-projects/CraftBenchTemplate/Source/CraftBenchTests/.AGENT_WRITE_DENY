@@ -1,0 +1,36 @@
+AGENT WRITE DENY — CraftBench verifier-only module
+====================================================
+
+This directory (Source/CraftBenchTests/) and every file under it are part of
+the CraftBench verifier. They live INSIDE the project tree only because the
+CraftBenchTemplateEditor target needs to compile the AFunctionalTest subclass
+against the same engine headers as the agent's module — they do NOT belong to
+the agent's writable surface.
+
+Enforcement (two independent layers):
+
+  1. Sandbox: AGENT_WRITABLE.json lists Source/CraftBenchTests/ as a deny
+     prefix — any submission file under it is REJECTED before L1/L2 run.
+  2. Provenance: the runner materializes the graded substrate from git HEAD,
+     so an on-disk edit to this module never reaches the grade. Committed
+     changes are review-gated via .github/CODEOWNERS.
+
+This includes:
+
+  - CraftBenchTests.Build.cs
+  - CraftBenchTests.h / CraftBenchTests.cpp
+  - CraftBenchFunctionalTest.h / CraftBenchFunctionalTest.cpp (the base class)
+  - the flat bp-g2 fixtures (SpawnerPopulationFunctionalTest, ...)
+  - the per-task fixtures under Tasks/<task-id>/
+  - this .AGENT_WRITE_DENY marker itself
+  - any future file added to this directory by the substrate maintainers
+
+If you are the agent reading this: do not edit, copy, move, or shadow any
+file under this directory. The behavior the task asks you to produce is
+authored entirely inside Source/CraftBenchTemplate/ (or as asset deliverables
+under Content/Tasks/). If a task appears to require editing a test, it does
+not — re-read the prompt; the behavior is always expressible without touching
+the verifier.
+
+If you are a substrate maintainer: changes here only take grading effect once
+committed (the runner grades from git HEAD) and require CODEOWNERS review.

@@ -1,0 +1,161 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# CraftBench score-reports (per research.md R-7)
+runs/
+# Measured output never belongs in this repository: it ships the harness
+# and the tasks, not our results. runs/ is what the harness writes;
+# results/ is where published result sets get collected.
+results/
+
+# `cb where --link` convenience links to the out-of-repo CB_ROOT dirs
+.cb/
+
+# Leaderboard build artifacts
+leaderboard/_site/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs / temp
+*.log
+*.tmp
+
+# The failure log is LOCAL-ONLY + rolling (2026-07-27): every failed run
+# appends an entry, so tracked it churned every diff and merge. Entries older
+# than the rolling window live committed at the archived failure log.
+docs/FAILURE-LOG.md
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+
+# UE build artifacts — regenerable from source (UBT rebuilds them); untracked
+# 2026-06-10 so they stop polluting every diff. Plugins/ is a host-local aura-plugin clone.
+UE-projects/CraftBenchTemplate/Intermediate/
+UE-projects/CraftBenchTemplate/Saved/
+UE-projects/CraftBenchTemplate/Binaries/
+UE-projects/CraftBenchTemplate/DerivedDataCache/
+
+# Per-developer AI-tool / editor MCP client configs — not repo artifacts.
+# Match anywhere (root and inside the substrate) so they stop polluting git status.
+.codex/
+.cursor/
+.gemini/
+
+# Stray reference PDFs dropped at the repo root. Keep papers under docs/references/
+# (tracked deliberately) if the team wants to retain them — not loose at root.
+/*.pdf
+
+# Host-local aura-plugin clone (Aura + Ramen). Never committed; created by the
+# manual clone-into-Plugins setup step (see docs/WINDOWS.md §3).
+/UE-projects/CraftBenchTemplate/Plugins/
+
+# Ephemeral git worktrees the Workflow tool creates for isolated agents.
+# Never commit these: each is an embedded git repo, and they are disposable
+# (auto-removed when the agent leaves them unchanged).
+.claude/worktrees/
+runs/.kill-audit.log
+
+# --- generated substrate scratch (2026-08-12) ---------------------------------
+# These are TOOL OUTPUT, not source, and leaving them untracked was not free:
+# `cb refgate` caches a per-machine certificate that is only valid while the
+# task/substrate git tree is clean, so ANY untracked file under a substrate
+# invalidates every certificate permanently — each gate then re-grades from
+# scratch (~3 min each; three gates on 2026-08-12 cost 600s and cached nothing,
+# reporting "PASS not certified — uncommitted changes under the task/substrate").
+#
+# `.Aura/` is the Aura client's headless-instance state. `_runreport/` is
+# the report/preview lane's scratch map directory
+# (`CB_GALLERY_MAP` defaults to /Game/Tasks/_runreport/L_Gallery), plus their
+# One-File-Per-Actor mirrors, which is where the bulk of the files live.
+# Named explicitly rather than globbed: a `_*` pattern under Content/Tasks/
+# would silently swallow a future real task id.
+UE-projects/*/.Aura/
+UE-projects/*/Content/Tasks/_runreport/
+UE-projects/*/Content/__ExternalActors__/Tasks/_runreport/
+UE-projects/*/Content/__ExternalObjects__/Tasks/_runreport/
+
+# Authoring-lane scratch under a task folder. `.staged/` is the stage-and-grade
+# working area and `.baseline-stash/` holds pre-edit copies; both are inputs to
+# an authoring script, never deliverables. Ignored because a careless
+# `git add -A tasks/` sweeps them in — which is exactly how 21 files of the
+# a RETIRED task set got resurrected during the 2026-08-12 rebase
+# (caught post-merge; the set had been retired into the baskets upstream).
+tasks/*/*/authoring/.staged/
+tasks/*/*/authoring/.baseline-stash/
+
+# Rig build-state marker (engine|substrate stamp, stack.py ensure-built lane).
+# Machine-local state: must never dirty the substrate tree — an untracked
+# marker here made every refgate PASS uncertifiable (2026-08-16 night sweep).
+UE-projects/*/.cb-built
+
+# The paper lives in its own repository, and is sometimes cloned here for
+# convenience. A nested checkout must never be added to THIS one: `git add`
+# would record it as a gitlink to a commit no clone of craftbench can resolve,
+# and CI's inventory check reads `git ls-files`.
+/paper/
+
+# Working spreadsheets (task slates, eval sheets, prompt corpora). They are
+# review material, not repo artefacts, and a binary .xlsx cannot be reviewed in
+# a diff.
+*.xlsx
+
+# The proxy's marker census (`CB_PROXY_MARKER_CENSUS`, aura_rig/proxy.py) — a
+# RUNTIME log that lands wherever the proxy was started from, not source. One
+# copy reached a commit; the pattern is unanchored so it cannot again from a
+# different cwd.
+marker_census.jsonl
+
+# --- Epic Games template content — REGENERATED, never committed (2026-08-30) --
+# CraftBench cannot relicense material it does not own, and the UE EULA
+# restricts redistributing engine Content to Engine Licensees — which a public
+# repo cannot guarantee its readers are. So the 881 Epic-authored Content files
+# (260 MB) were removed and are restored from the reader's own UE 5.8 install by
+# the bootstrap step in the README. These rules keep a regenerated copy from
+# being accidentally committed back.
+#
+# Each rule names an exact Epic subdirectory. Do NOT collapse the
+# __External*__ rules into a bare `__ExternalActors__/`: those One-File-Per-
+# Actor trees are SPLIT. 479 actor + 42 object sidecars mirror the Epic maps
+# below and are regenerated; the other 286 + 9 sit under `Maps/` and are OURS —
+# the committed task maps, which are the benchmark itself. A rule broad enough
+# to swallow `__ExternalActors__/Maps/` would silently untrack task content and
+# turn an L2 grade into a FAIL.
+UE-projects/ThirdPerson/Content/Characters/
+UE-projects/ThirdPerson/Content/ThirdPerson/
+UE-projects/ThirdPerson/Content/Variant_Combat/
+UE-projects/ThirdPerson/Content/Variant_SideScrolling/
+UE-projects/ThirdPerson/Content/Variant_Platforming/
+UE-projects/ThirdPerson/Content/LevelPrototyping/
+UE-projects/ThirdPerson/Content/Input/
+UE-projects/CraftBenchTemplate/Content/Characters/
+
+# OFPA sidecars for the Epic maps only — `Maps/` is deliberately absent.
+UE-projects/ThirdPerson/Content/__ExternalActors__/ThirdPerson/
+UE-projects/ThirdPerson/Content/__ExternalActors__/Variant_Combat/
+UE-projects/ThirdPerson/Content/__ExternalActors__/Variant_SideScrolling/
+UE-projects/ThirdPerson/Content/__ExternalActors__/Variant_Platforming/
+UE-projects/ThirdPerson/Content/__ExternalObjects__/ThirdPerson/
+UE-projects/ThirdPerson/Content/__ExternalObjects__/Variant_Combat/
+UE-projects/ThirdPerson/Content/__ExternalObjects__/Variant_SideScrolling/
+UE-projects/ThirdPerson/Content/__ExternalObjects__/Variant_Platforming/

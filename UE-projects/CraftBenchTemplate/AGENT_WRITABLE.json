@@ -1,0 +1,29 @@
+{
+    "_comment": "CraftBench substrate-level manifest describing which submission paths an agent is allowed to write. Path-prefix matching is applied to POSIX-normalized, repo-relative paths after symlink resolution. A submission file must match at least one 'writable' prefix AND must not match any 'deny' prefix. Both lists are evaluated against directories and files alike. See tools/verify-single/sandbox.py. Content/ carve-out (2026-06-01): Content/Tasks/ is writable so asset-deliverable tasks (materials, widgets, blueprints) can be submitted under Content/Tasks/<task_id>/; the rest of Content/ stays denied (allowlist-miss), with Content/Maps/ denied explicitly for defense-in-depth.",
+    "_asset_writable_comment": "BP-deliverable allowance (2026-06-05): ASSET files (.uasset/.umap) under these prefixes are accepted by --capture-assets even though they are OUTSIDE the strict 'writable' source prefixes. Aura's bp_agent/material_agent/audio_agent author assets under Content/Blueprints/, Content/Abilities/, Content/Generated_Materials/, and Content/Generated_Audio/ (not only Content/Tasks/), so those must be captured + graded — observed live on the realistic-collectible-coin run (BP_CollectibleCoin under Content/Blueprints/, M_GoldenCoin under Content/Generated_Materials/, SFX_CoinPickup under Content/Generated_Audio/). 'deny' still wins — Content/Maps/ (verifier-owned task maps) stays rejected. This list governs ASSET files only; non-asset files outside 'writable' remain rejected, so the allowance only widens which generated-asset folders are gradeable, never which source/config paths an agent may write.",
+    "substrate": "CraftBenchTemplate",
+    "game_module": "CraftBenchTemplate",
+    "writable": [
+        "Source/CraftBenchTemplate/",
+        "Content/Tasks/"
+    ],
+    "asset_writable": [
+        "Content/Tasks/",
+        "Content/Blueprints/",
+        "Content/Abilities/",
+        "Content/Generated_Materials/",
+        "Content/Generated_Audio/"
+    ],
+    "plugin_asset_writable": [
+        "Plugins/GameFeatures/Tasks/t2-the-capability-exists-only-while-enabled/CBEnabledCapability/Content/"
+    ],
+    "deny": [
+        "Source/CraftBenchTests/",
+        "Config/",
+        "Content/Maps/",
+        "Tools/",
+        "Plugins/",
+        "CraftBenchTemplate.uproject",
+        "AGENT_WRITABLE.json"
+    ]
+}

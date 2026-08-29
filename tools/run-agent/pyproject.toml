@@ -1,0 +1,32 @@
+# Packaging for the CraftBench harness CLI (`cb`).
+#
+# EDITABLE INSTALL ONLY: the rig resolves task specs and the verifier by
+# __file__-relative and repo-relative paths, so the package must keep running
+# from this source tree. `setup.ps1` / `setup.sh` run exactly:
+#
+#     py -3.12 -m pip install -e tools/run-agent
+#
+# which puts a real `cb` console script on the interpreter's Scripts dir
+# (PATH-wide `cb` from any shell, any cwd). The repo-root `cb.cmd` / `cb`
+# shims keep working without any install — the pip entry point is additive.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "craftbench-rig"
+version = "0.1.0"
+description = "CraftBench harness CLI (cb) - graded UE 5.8 agent evals"
+requires-python = ">=3.11"
+# stdlib-only by design; psutil is optional (mem_gate has a ctypes fallback).
+dependencies = []
+
+[project.optional-dependencies]
+mem = ["psutil>=5.9"]
+
+[project.scripts]
+cb = "aura_rig.cb:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aura_rig*"]

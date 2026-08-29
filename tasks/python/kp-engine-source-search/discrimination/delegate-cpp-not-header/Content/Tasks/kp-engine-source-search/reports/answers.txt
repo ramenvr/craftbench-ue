@@ -1,0 +1,4 @@
+answer id=delegate-header value=Engine/Source/Runtime/Core/Private/Misc/CoreDelegates.cpp
+answer id=cvar-default value=65536
+answer id=class-module value=Json
+answer id=name-capacity value=1024

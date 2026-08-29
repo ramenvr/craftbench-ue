@@ -1,0 +1,43 @@
+# CraftBench GOLD SET — the explicit opt-in list for tasklint's
+# `discrimination-coverage` rule (the g2 scale-up plan I0.3).
+#
+# WHAT THIS FILE IS
+#   A task on this list is held to the gold bar: every entry under the spec's
+#   "## Anti-gaming notes" must name EITHER (a) a committed discrimination
+#   variant directory, OR (b) an explicit inherited/argued justification that
+#   carries a pointer to where it IS proven. Nothing else changes for a listed
+#   task — no other lint rule reads this file.
+#
+# WHY IT IS A LIST AND NOT A SET / HEURISTIC
+#   Opt-in by NAME, deliberately. A new task must never become subject to the
+#   gold bar by accident (by landing in tasks/bp-g2/, by declaring L2I, by
+#   having a discrimination/ dir). Adding a line here is a decision someone
+#   makes on purpose, and it is reviewable as a one-line diff.
+#
+# WHAT THIS FILE IS NOT
+#   NOT a count-equality bar. `len(variants) == len(notes)` is REJECTED: it
+#   fires on 8 of 8 current bp-g2 tasks, it outlaws the documented `-bp`
+#   inheritance law (a `-bp` twin legitimately inherits its C++ original's
+#   behavioral variants), and the cheapest way to go green under it is to
+#   DELETE an honest anti-gaming note. See bp-g2-scaleup-plan.md §6 item 9.
+#
+# FORMAT
+#   One task per line. Either a bare task id (`gp-glide-stamina-cpp`) or a
+#   set-qualified id (`cpp/gp-glide-stamina-cpp`) — both match. `#` starts a
+#   comment; blank lines are ignored. ASCII only.
+#
+# HOW A NOTE EARNS COVERAGE
+#   (a) it writes a `discrimination/<variant>/` path whose directory is
+#       committed — under this task, or under any task in the repo (that is
+#       how a `-bp` twin cites its C++ original's variant); or it writes the
+#       variant's bare directory name in backticks;
+#   (b) it says inherited / argued AND carries a pointer that resolves on
+#       disk — a repo-relative path, a task-relative path, or another task id.
+#
+# The bar is per-NOTE coverage, never a count. A note whose defense is argued
+# rather than run is fine — it just has to say where the argument is proven.
+
+cpp/gp-glide-stamina-cpp
+bp/gp-glide-stamina-bp
+cpp/gp-poison-dot-stack-cpp
+bp/gp-poison-dot-stack-bp
