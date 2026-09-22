@@ -19,24 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-SCOPE OF THIS GRANT
-
-"The Software" above means the parts of this repository authored by CraftBench:
-the harness under `tools/`, the task set under `tasks/`, the verifier-only UE
-modules `UE-projects/*/Source/CraftBenchTests/`, the scaffold sources under
-`UE-projects/CraftBenchTemplate/Source/CraftBenchTemplate/`, and the
-documentation.
-
-It does NOT extend to material owned by Epic Games, Inc. that is redistributed
-here as part of an Unreal Engine project — the stock template content under
-`UE-projects/*/Content/` and the stock template C++ under
-`UE-projects/ThirdPerson/Source/ThirdPerson/`. Those files carry their own
-`Copyright Epic Games, Inc.` headers and remain governed by the Unreal Engine
-End User License Agreement (https://www.unrealengine.com/eula). CraftBench does
-not own that material and does not license it to you.
-
-Where a source file's own copyright header disagrees with this note, the header
-is authoritative. See THIRD-PARTY.md for the full boundary.
